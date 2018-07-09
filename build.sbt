@@ -31,7 +31,7 @@ lazy val commonSettings = Seq(
   // These values will be filled in by the k8s StatefulSet and Deployment
   dockerEntrypoint ++= Seq(
     "-agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=6006",
-    "-Dcom.sun.management.jmxremote.port=9010 -Dcom.sun.management.jmxremote.authenticate=false -Dcom.sun.management.jmxremote.ssl=false",
+    "-Dcom.sun.management.jmxremote.local.only=false -Dcom.sun.management.jmxremote.port=9010 -Dcom.sun.management.jmxremote.authenticate=false -Dcom.sun.management.jmxremote.ssl=false",
     """-DakkaActorSystemName="$AKKA_ACTOR_SYSTEM_NAME"""",
     """-Dakka.remote.netty.tcp.hostname="$(eval "echo $AKKA_REMOTING_BIND_HOST")"""",
     """-Dakka.remote.netty.tcp.port="$AKKA_REMOTING_BIND_PORT"""",
