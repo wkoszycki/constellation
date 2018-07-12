@@ -6,9 +6,6 @@ metadata:
   name: node-service
 spec:
   ports:
-  - port: 2551
-    name: p2p
-    targetPort: 2551
   - port: 9000
     name: rpc
     targetPort: 9000
@@ -53,9 +50,6 @@ spec:
         # TODO: Remove host port, this makes the RPC publicly accessible.
           hostPort: 9000
           name: rpc
-        - containerPort: 2551
-          hostPort: 2551
-          name: p2p
         - containerPort: 16180
           hostPort: 16180
           name: udp
