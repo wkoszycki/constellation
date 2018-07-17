@@ -7,7 +7,6 @@ import akka.http.scaladsl.model._
 import akka.http.scaladsl.unmarshalling.{FromEntityUnmarshaller, PredefinedFromEntityUnmarshallers, Unmarshal}
 import akka.stream.ActorMaterializer
 import org.constellation.primitives.Schema.Id
-import org.json4s.JsonAST.JArray
 import org.json4s.native.Serialization
 import org.json4s.{Formats, native}
 
@@ -22,6 +21,8 @@ class APIClient(val host: String = "127.0.0.1", val port: Int)(
   implicit val executionContext: ExecutionContextExecutor
 ) {
 
+  import constellation.EasyFutureBlock
+
   var udpPort: Int = 16180
   var id: Id = null
 
@@ -33,34 +34,34 @@ class APIClient(val host: String = "127.0.0.1", val port: Int)(
 
   def base(suffix: String) = Uri(s"$baseURI/$suffix")
 
+  private val http = Http()
+
   def get(suffix: String, queryParams: Map[String,String] = Map()): Future[HttpResponse] = {
-    Http().singleRequest(
+    http.singleRequest(
       HttpRequest(uri = base(suffix).withQuery(Query(queryParams)))
     )
   }
 
   def getSync(suffix: String, queryParams: Map[String,String] = Map()): HttpResponse = {
-    import constellation._
-    Http().singleRequest(
+    http.singleRequest(
       HttpRequest(uri = base(suffix).withQuery(Query(queryParams)))
     ).get()
   }
 
   def addPeer(remote: String): HttpResponse = postSync("peer", remote)
 
-  def getBlocking [T <: AnyRef](suffix: String, queryParams: Map[String,String] = Map(), timeout: Int = 5)
-                               (implicit m : Manifest[T], f : Formats = constellation.constellationFormats): T = {
-    import constellation.EasyFutureBlock
-    val httpResponse = Http().singleRequest(
-      HttpRequest(uri = base(suffix).withQuery(Query(queryParams)))
-    ).get(timeout)
-    Unmarshal(httpResponse.entity).to[String].map { r => Serialization.read[T](r) }.get()
+  def getBlocking[T](suffix: String, queryParams: Map[String,String] = Map(), timeout: Int = 5)
+                              (implicit m : Manifest[T], f : Formats = constellation.constellationFormats): T = {
+
+    val req = HttpRequest(uri = base(suffix).withQuery(Query(queryParams)))
+    http.singleRequest(req).flatMap {
+      httpResponse => Unmarshal(httpResponse.entity).to[String].map { r => Serialization.read[T](r) }
+    }.get()
   }
 
-  def getBlockingStr[T <: AnyRef](suffix: String, queryParams: Map[String,String] = Map(), timeout: Int = 5)
+  def getBlockingStr[T](suffix: String, queryParams: Map[String,String] = Map(), timeout: Int = 5)
                                  (implicit m : Manifest[T], f : Formats = constellation.constellationFormats): String = {
-    import constellation.EasyFutureBlock
-    val httpResponse = Http().singleRequest(
+    val httpResponse = http.singleRequest(
       HttpRequest(uri = base(suffix).withQuery(Query(queryParams)))
     ).get(timeout)
     Unmarshal(httpResponse.entity).to[String].get()
@@ -69,7 +70,7 @@ class APIClient(val host: String = "127.0.0.1", val port: Int)(
   def post(suffix: String, t: AnyRef)(implicit f : Formats = constellation.constellationFormats): Future[HttpResponse] = {
 
     val ser = Serialization.write(t)
-    Http().singleRequest(
+    http.singleRequest(
       HttpRequest(uri = base(suffix), method = HttpMethods.POST, entity = HttpEntity(
         ContentTypes.`application/json`, ser)
       ))
@@ -78,7 +79,6 @@ class APIClient(val host: String = "127.0.0.1", val port: Int)(
   def postSync[T <: AnyRef](suffix: String, t: T)(
     implicit f : Formats = constellation.constellationFormats
   ): HttpResponse = {
-    import constellation.EasyFutureBlock
     post(suffix, t).get()
   }
 

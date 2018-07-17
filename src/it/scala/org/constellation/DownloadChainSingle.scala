@@ -4,7 +4,7 @@ import akka.stream.ActorMaterializer
 import constellation._
 import org.constellation.ClusterDebug.system
 import org.constellation.ClusterTest.getPodMappings
-import org.constellation.primitives.Schema.{BundleHashQueryResponse, Sheaf, Transaction}
+import org.constellation.primitives.Schema.{Sheaf, Transaction}
 import org.constellation.util.APIClient
 
 import scala.concurrent.ExecutionContextExecutor
@@ -46,12 +46,16 @@ object DownloadChainSingle {
     while (hash != "coinbase") {
       val sheaf = a1.getBlocking[Option[Sheaf]]("bundle/" + hash).get
       hash = sheaf.bundle.extractParentBundleHash.pbHash
-      println(s"Height: ${sheaf.height.get} hash: $hash")
+      println(s"Height: ${sheaf.height.get} hash: $hash txCount: ${sheaf.bundle.extractTXHash.size}")
+//      val txs = sheaf.bundle.extractTXHash.map(_.txHash)
+//      val w = a1.getBlocking[Seq[Option[Transaction]]]("transactions", Map("txs" -> txs.mkString(",")))
       sheaf.bundle.extractTXHash.foreach{ h =>
         val hActual = h.txHash
         val tx = a1.getBlocking[Option[Transaction]]("transaction/" + hActual)
-        if (tx.isEmpty) println(s"Missing TX Hash: $hActual")
-        txFile.appendAll(tx.get.json + "\n")
+        tx match {
+          case None => println(s"Missing TX Hash: $hActual")
+          case Some(t) => txFile.appendAll(t.json + "\n")
+        }
       }
       chainFile.appendAll(sheaf.json + "\n")
     }

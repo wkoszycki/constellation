@@ -96,6 +96,13 @@ class API(
               }
             }
           } ~
+          pathPrefix("transactions") {
+            parameters('txs.as[String]) { (txs) =>
+              val txd = txs.split(",")
+              val res = txd.map { ps => lookupTransaction(ps ) }
+              complete(res)
+            }
+          } ~
           pathPrefix("bundle") {
             get {
               extractUnmatchedPath { p =>
