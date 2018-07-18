@@ -8,7 +8,6 @@ import org.constellation.primitives.Schema.{Id, LocalPeerData, Peer, PeerSyncHea
 import org.constellation.util.{APIClient, Signed}
 
 import scala.collection.concurrent.TrieMap
-import scala.collection.mutable
 import scala.concurrent.ExecutionContextExecutor
 
 trait PeerInfo {

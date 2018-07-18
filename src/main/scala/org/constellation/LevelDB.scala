@@ -4,6 +4,7 @@ import java.io.File
 
 import akka.actor.Actor
 import akka.util.Timeout
+import com.google.common.cache.CacheBuilder
 import constellation.{ParseExt, SerExt}
 import org.constellation.LevelDB.RestartDB
 import org.constellation.metrics.MetricsActor
@@ -11,6 +12,9 @@ import org.constellation.serializer.KryoSerializer
 import org.constellation.util.ProductHash
 import org.iq80.leveldb._
 import org.iq80.leveldb.impl.Iq80DBFactory._
+import scalacache.guava.GuavaCache
+import scalacache.modes.sync._
+import scalacache._
 
 import scala.tools.nsc.io.{File => SFile}
 import scala.util.Try
@@ -35,12 +39,16 @@ class LevelDBActor(dbId: String)(implicit timeoutI: Timeout) extends Actor {
 
   var db: LevelDB = _
 
+  val underlyingGuavaCache = CacheBuilder.newBuilder().maximumSize(1000L).build[String, Entry[Option[AnyRef]]]
+  implicit val guavaCache: Cache[Option[AnyRef]] = GuavaCache(underlyingGuavaCache)
+
   def tmpDirId = new File("tmp", dbId)
   def mkDB = db = new LevelDB(new File(tmpDirId, "db"))
 //  def getTmpFile = File.createTempFile("lvldb", "")
 //  def mkDB = db = new LevelDB(getTmpFile)
 
   def restartDB(): Unit = {
+    removeAll()
     Try {
       db.destroy()
     }
@@ -57,14 +65,18 @@ class LevelDBActor(dbId: String)(implicit timeoutI: Timeout) extends Actor {
     case RestartDB =>
       restartDB()
     case DBGet(key) =>
-      val res = Try{db.getBytes(key).map {KryoSerializer.deserialize}}.toOption.flatten
+      val res = caching(key)(None) {
+        db.getBytes(key).map {KryoSerializer.deserialize}
+      }
       sender() ! res
       publishMetric(MDBGet(1))
     case DBPut(key, obj) =>
+      put(key)(Option(obj))
       val bytes = KryoSerializer.serializeAnyRef(obj)
       db.putBytes(key, bytes)
       publishMetric(MDBPut(1))
     case DBDelete(key) =>
+      remove(key)
       if (db.contains(key)) {
         sender() ! db.delete(key).isSuccess
         publishMetric(MDBDelete(1))
