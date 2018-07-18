@@ -2,19 +2,15 @@ package org.constellation.primitives
 
 import java.util.concurrent.TimeUnit
 
-import cats.Monoid
-import org.constellation.LevelDB
-import org.constellation.consensus.Consensus.{CC, RoundHash}
-import org.constellation.primitives.Schema._
-import org.constellation.util.Signed
-
-import scala.collection.concurrent.TrieMap
-import constellation._
-import org.constellation.LevelDB.{DBDelete, DBGet, DBPut}
-
-import scala.util.Try
 import akka.pattern.ask
 import akka.util.Timeout
+import cats.Monoid
+import constellation._
+import org.constellation.LevelDB.{DBDelete, DBGet, DBPut}
+import org.constellation.consensus.Consensus.{CC, RoundHash}
+import org.constellation.primitives.Schema._
+
+import scala.collection.concurrent.TrieMap
 
 trait BundleDataExt extends Reputation with MetricsExt with TransactionExt {
 
@@ -62,28 +58,13 @@ trait BundleDataExt extends Reputation with MetricsExt with TransactionExt {
 
   @volatile var lastCleanupHeight = 0
 
-  def lookupBundleDB(hash: String) : Option[Sheaf] = {
-    implicit val timeout: Timeout = Timeout(5, TimeUnit.SECONDS)
-    dbActor.flatMap{ d => (d ? DBGet(hash)).mapTo[Option[Sheaf]].getOpt(t=5).flatten }
-  }
-
-  def lookupBundleDBFallbackBlocking(hash: String): Option[Sheaf] = {
+  def lookupBundle(hash: String): Option[Sheaf] = {
     implicit val timeout: Timeout = Timeout(5, TimeUnit.SECONDS)
     def dbQuery = {
       dbActor.flatMap{ d => (d ? DBGet(hash)).mapTo[Option[Sheaf]].getOpt(t=5).flatten }
     }
     val res = bundleToSheaf.get(hash)
     if (res.isEmpty) dbQuery else res
-  }
-
-  def lookupBundle(hash: String): Option[Sheaf] = {
-    // leveldb fix here
-   /* def dbQuery = {
-      dbActor.flatMap{ d => (d ? DBGet(hash)).mapTo[Option[Sheaf]].getOpt(t=5).flatten }
-    }*/
-    val res = bundleToSheaf.get(hash)
-    //if (res.isEmpty) dbQuery else res
-    res
   }
 
   def lookupBundle(bundle: Bundle): Option[Sheaf] = {
@@ -239,7 +220,7 @@ trait BundleDataExt extends Reputation with MetricsExt with TransactionExt {
                          ancestors: Seq[Sheaf] = Seq(),
                          upTo: Int = 1
                        ): Seq[Sheaf] = {
-    val parent = lookupBundleDBFallbackBlocking(parentHash)
+    val parent = lookupBundle(parentHash)
     def updatedAncestors: Seq[Sheaf] = Seq(parent.get) ++ ancestors
     if (parent.isEmpty || updatedAncestors.size >= upTo) {
       ancestors

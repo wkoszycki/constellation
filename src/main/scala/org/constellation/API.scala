@@ -253,7 +253,7 @@ class API(
                 val ps = p.toString().tail
 
                 //findAncestorsUpTo()
-                val maybeSheaf = lookupBundleDBFallbackBlocking(ps)
+                val maybeSheaf = lookupBundle(ps)
                 complete(maybeSheaf)
               }
             }

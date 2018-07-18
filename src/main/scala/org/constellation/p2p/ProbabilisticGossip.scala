@@ -2,11 +2,9 @@ package org.constellation.p2p
 
 import java.net.InetSocketAddress
 
+import constellation._
 import org.constellation.Data
 import org.constellation.primitives.Schema._
-import org.constellation.util.ProductHash
-import constellation._
-import org.constellation.LevelDB.{DBDelete, DBPut}
 
 import scala.util.{Failure, Random, Success, Try}
 
@@ -23,7 +21,7 @@ trait ProbabilisticGossip extends PeerAuth with LinearGossip {
       case BatchBundleHashRequest(hashes) =>
         hashes.foreach{h =>
           /// println("Sending BundleMetaData to peer on request")
-          lookupBundleDBFallbackBlocking(h).foreach{
+          lookupBundle(h).foreach{
             b =>
               // TODO: Send all meta for sync conflict detection.
               udpActor ! UDPSend(b.bundle, remote)

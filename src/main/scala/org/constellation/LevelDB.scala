@@ -1,25 +1,21 @@
 package org.constellation
 
 import java.io.File
-import java.security.PublicKey
 
-import akka.actor.{Actor, ActorRef, ActorSystem}
+import akka.actor.Actor
 import akka.util.Timeout
+import constellation.{ParseExt, SerExt}
+import org.constellation.LevelDB.RestartDB
+import org.constellation.metrics.MetricsActor
+import org.constellation.serializer.KryoSerializer
 import org.constellation.util.ProductHash
-
-import scala.util.Try
 import org.iq80.leveldb._
 import org.iq80.leveldb.impl.Iq80DBFactory._
-import constellation.SerExt
-import constellation.ParseExt
-import org.constellation.LevelDB.RestartDB
-import org.constellation.serializer.KryoSerializer
 
 import scala.tools.nsc.io.{File => SFile}
+import scala.util.Try
 
 // https://doc.akka.io/docs/akka/2.5/persistence-query-leveldb.html
-
-import constellation._
 
 object LevelDB {
 
@@ -31,14 +27,18 @@ object LevelDB {
 
 }
 
-import LevelDB._
+import org.constellation.LevelDB._
 
-class LevelDBActor(dao: Data)(implicit timeoutI: Timeout) extends Actor {
+class LevelDBActor(dbId: String)(implicit timeoutI: Timeout) extends Actor {
+
+  import MetricsActor._
 
   var db: LevelDB = _
 
-  def tmpDirId = new File("tmp", dao.id.medium)
+  def tmpDirId = new File("tmp", dbId)
   def mkDB = db = new LevelDB(new File(tmpDirId, "db"))
+//  def getTmpFile = File.createTempFile("lvldb", "")
+//  def mkDB = db = new LevelDB(getTmpFile)
 
   def restartDB(): Unit = {
     Try {
@@ -47,23 +47,27 @@ class LevelDBActor(dao: Data)(implicit timeoutI: Timeout) extends Actor {
     mkDB
   }
 
-  mkDB
+  restartDB()
+
+  def publishMetric(r: MRecord): Unit = {
+    context.system.eventStream.publish(r)
+  }
 
   override def receive: Receive = {
     case RestartDB =>
       restartDB()
     case DBGet(key) =>
-      dao.numDBGets += 1
       val res = Try{db.getBytes(key).map {KryoSerializer.deserialize}}.toOption.flatten
       sender() ! res
+      publishMetric(MDBGet(1))
     case DBPut(key, obj) =>
-      dao.numDBPuts += 1
       val bytes = KryoSerializer.serializeAnyRef(obj)
       db.putBytes(key, bytes)
+      publishMetric(MDBPut(1))
     case DBDelete(key) =>
       if (db.contains(key)) {
-        dao.numDBDeletes += 1
         sender() ! db.delete(key).isSuccess
+        publishMetric(MDBDelete(1))
       } else sender() ! true
   }
 

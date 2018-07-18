@@ -15,6 +15,7 @@ import com.typesafe.config.ConfigFactory
 import com.typesafe.scalalogging.Logger
 import org.constellation.consensus.Consensus
 import org.constellation.crypto.KeyUtils
+import org.constellation.metrics.MetricsActor
 import org.constellation.p2p.{PeerToPeer, RegisterNextActor, UDPActor}
 import org.constellation.primitives.Schema.{AddPeerFromLocal, ToggleHeartbeat}
 import org.constellation.util.APIClient
@@ -110,8 +111,12 @@ class ConstellationNode(
     data.apiAddress = Some(new InetSocketAddress(hostName, httpPort))
   }
 
+  val metricsActor = system.actorOf(Props[MetricsActor])
+//  val metricsActor = system.actorOf(Props(new MetricsActor()), name = "MetricsActor_" + System.currentTimeMillis().toString)
+  system.eventStream.subscribe(metricsActor, classOf[MetricsActor.MRecord])
+
   val dbActor: ActorRef =  system.actorOf(
-    Props(new LevelDBActor(data)), s"ConstellationDBActor_$publicKeyHash"
+    Props(new LevelDBActor(data.id.medium)), s"ConstellationDBActor_$publicKeyHash"
   )
 
 

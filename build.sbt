@@ -6,8 +6,8 @@ addCompilerPlugin("org.scalamacros" % "paradise" % "2.1.0" cross CrossVersion.fu
 lazy val _version = "1.0.1"
 
 lazy val versions = new {
-  val akka = "2.4.18"
-  val akkaHttp = "10.0.10"
+  val akka = "2.5.14"
+  val akkaHttp = "10.1.3"
   val akkaHttpCors = "0.2.2"
 }
 
@@ -73,8 +73,7 @@ lazy val coreDependencies = Seq(
   "net.liftweb" %% "lift-json" % "3.1.1",
   "com.google.guava" % "guava" % "21.0",
   "org.bouncycastle" % "bcprov-jdk15on" % "1.51",
-  "org.iq80.leveldb"            % "leveldb"          % "0.10" withSources() withJavadoc(),
-  "org.fusesource.leveldbjni"   % "leveldbjni-all"   % "1.8" withSources() withJavadoc(),
+  "org.iq80.leveldb" % "leveldb" % "0.10" withSources() withJavadoc(),
   "com.codahale" % "shamir" % "0.6.0" withSources() withJavadoc(),
   "org.json4s" %% "json4s-ext" % "3.5.2",
   "org.scalaj" %% "scalaj-http" % "2.3.0" withJavadoc() withSources(),
@@ -82,7 +81,9 @@ lazy val coreDependencies = Seq(
   "com.twitter" %% "algebird-core" % "0.13.4",
   "org.typelevel" %% "cats-core" % "1.0.1",
   "net.glxn" % "qrgen" % "1.4",
-  "com.softwaremill.macmemo" %% "macros" % "0.4" withJavadoc() withSources()
+  "com.softwaremill.macmemo" %% "macros" % "0.4" withJavadoc() withSources(),
+  // https://mvnrepository.com/artifact/com.github.cb372/scalacache-guava
+  "com.github.cb372" %% "scalacache-guava" % "0.24.2" withJavadoc() withSources()
   // "com.esotericsoftware" % "kryo" % "4.0.2"
 )
 
