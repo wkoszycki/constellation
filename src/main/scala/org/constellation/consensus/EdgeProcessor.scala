@@ -26,6 +26,65 @@ object EdgeProcessor {
   val logger = Logger(s"EdgeProcessor")
   implicit val timeout: Timeout = Timeout(5, TimeUnit.SECONDS)
 
+
+  def tipsMergeable(s1: SignedObservationEdge,
+                    s2: SignedObservationEdge,
+                    dao: Data): Boolean = {
+
+    val genesisBaseHash = dao.genesisObservation.get.genesis.baseHash
+
+    def gatherTransactionsAndCheckpointBlocks(
+                                               s1: SignedObservationEdge,
+                                               dao: Data
+                                             ): Set[CheckpointBlock] = {
+      /*
+          Gather all unique checkpoint blocks, check for hash duplicate of transactions.
+          If no duplicates, apply all transactions to a ledger, check for negative balance.
+        */
+
+      dao.dbActor.getCheckpointCacheData(s1.baseHash).map { cp1 =>
+        if (cp1.checkpointBlock.baseHash != genesisBaseHash) {
+          val Seq(a1, a2) = cp1.checkpointBlock.parentSOE
+
+          val ar1 = gatherTransactionsAndCheckpointBlocks(a1, dao)
+          val ar2 = gatherTransactionsAndCheckpointBlocks(a2, dao)
+
+          ar1 ++ ar2 + cp1.checkpointBlock
+        } else { Set(cp1.checkpointBlock) }
+      }.getOrElse(throw new RuntimeException("CheckpointCacheData missing"))
+    }
+
+
+    val cbs1 = gatherTransactionsAndCheckpointBlocks(s1, dao)
+    val cbs2 = gatherTransactionsAndCheckpointBlocks(s2, dao)
+
+    val txs = (cbs1 ++ cbs2).toSeq.flatMap { x => x.transactions }
+    val txsHash = txs.map(_.hash)
+    // Get transactions from unique CP
+
+    if (txsHash.distinct.size != txsHash.size) {
+      logger.info(s"Duplicate transactions found: Distinct size: ${txsHash.distinct.size} - non distinct size: ${txsHash.size}")
+      false
+    } else {
+      // Compute the ledger balance to look for double spends
+      val tw = txs.flatMap { tx =>
+        Seq((tx.src, -tx.amount), (tx.dst, tx.amount))
+      }.groupBy(_._1).mapValues { _.map(_._2).sum }
+
+      tw.foreach { case (k,v) =>
+        if (v < 0) {
+          logger.warn(s"Negative balance: $k: $v")
+        }
+      }
+
+      // TODO: Exclude genesis TX
+      tw.forall { case (addr, balance) => balance >= 0 }
+    }
+
+
+  }
+
+
   def handleCheckpoint(cb: CheckpointBlock,
                        dao: Data,
                        internalMessage: Boolean = false)(implicit executionContext: ExecutionContext): Unit = {
@@ -92,7 +151,9 @@ object EdgeProcessor {
                 }
               }
               // Check if parent tips are valid to merge.
-
+              val s1 = cb.parentSOE.head
+              val s2 = cb.parentSOE.last
+              val mergeable = tipsMergeable(s1, s2, dao)
 
 
           // TODO: Process children
@@ -269,6 +330,14 @@ object EdgeProcessor {
       val tips = Random.shuffle(dao.checkpointMemPoolThresholdMet.toSeq).take(2)
 
       val tipSOE = tips.map {_._2._1.checkpoint.edge.signedObservationEdge}
+
+      /** Start of mergeable block **/
+      val mergeable = tipsMergeable(tipSOE.head, tipSOE.last, dao)
+      if (!mergeable) {
+        logger.warn("tips not mergable")
+        // should actually end function here -- don't merge if not mergable.
+      }
+      /** End of mergeable block **/
 
       val transactions = Random.shuffle(dao.transactionMemPool).take(dao.minCheckpointFormationThreshold)
       dao.transactionMemPool = dao.transactionMemPool.filterNot(transactions.contains)
