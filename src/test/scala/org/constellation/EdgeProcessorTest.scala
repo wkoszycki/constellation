@@ -75,6 +75,15 @@ class EdgeProcessorTest extends FlatSpec with MockFactory with OneInstancePerTes
     api
   }
 
+  "tipsMergeable" should "reject unmergeable tips" in {
+    assert(true)
+  }
+
+  "tipsMergeable" should "accept mergeable tips" in {
+    // TODO
+    assert(true)
+  }
+
   "Incoming transactions" should "be signed and returned if valid" in {
     val validatorResponse = Validation.validateTransaction(data.dbActor, tx)
     assert(validatorResponse.transaction === tx)

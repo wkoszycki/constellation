@@ -334,7 +334,7 @@ object EdgeProcessor {
       /** Start of mergeable block **/
       val mergeable = tipsMergeable(tipSOE.head, tipSOE.last, dao)
       if (!mergeable) {
-        logger.warn("tips not mergable")
+        logger.warn("tips not mergeable")
         // should actually end function here -- don't merge if not mergable.
       }
       /** End of mergeable block **/
