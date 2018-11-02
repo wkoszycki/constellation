@@ -10,14 +10,15 @@ import com.typesafe.scalalogging.Logger
 import constellation._
 import org.constellation.DAO
 import org.constellation.consensus.Consensus._
-import org.constellation.consensus.EdgeProcessor.{HandleTransaction, _}
+import org.constellation.consensus.EdgeProcessor._
 import org.constellation.consensus.Validation.{TransactionValidationStatus, validateCheckpointBlock}
 import org.constellation.primitives.Schema._
 import org.constellation.primitives._
 import org.constellation.util.{HashSignature, HeartbeatSubscribe, ProductHash}
+import scalaj.http.HttpResponse
 
-import scala.concurrent.{ExecutionContext, Future}
-import scala.util.Random
+import scala.concurrent.{ExecutionContext, ExecutionContextExecutor, Future}
+import scala.util.{Failure, Random, Success, Try}
 
 object EdgeProcessor {
 
@@ -28,7 +29,9 @@ object EdgeProcessor {
   val logger = Logger(s"EdgeProcessor")
   implicit val timeout: Timeout = Timeout(5, TimeUnit.SECONDS)
 
-  def signFlow(dao: DAO, cb: CheckpointBlock): Unit = {
+
+
+def signFlow(dao: DAO, cb: CheckpointBlock): Unit = {
     // Mock
     // Check to see if we should add our signature to the CB
     val cbPrime = updateCheckpointWithSelfSignatureEmit(cb, dao)
@@ -45,8 +48,8 @@ object EdgeProcessor {
     * @param executionContext
     */
   def handleCheckpointOld(cb: CheckpointBlock,
-                       dao: DAO,
-                       internalMessage: Boolean = false)(implicit executionContext: ExecutionContext): Unit = {
+                          dao: DAO,
+                          internalMessage: Boolean = false)(implicit executionContext: ExecutionContext): Unit = {
     if (!internalMessage) dao.metricsManager ! IncrementMetric("checkpointMessages")
     else dao.metricsManager ! IncrementMetric("internalCheckpointMessages")
     val existingCacheData = dao.dbActor.getCheckpointCacheData(cb.baseHash)
@@ -99,21 +102,21 @@ object EdgeProcessor {
           val validatedTransactions = cb.transactions.map(Validation.validateTransaction(dao.dbActor, _))
           val validAccordingToCurrentState = validatedTransactions.forall(_.validByCurrentState)
 
-            if (validAccordingToCurrentState) {
-              signFlow()
-            }
-            else {
-                val v = validatedTransactions.forall { s =>
-                  cb.checkpoint.edge.parentHashes.forall { ancestorHash =>
-                    s.validByAncestor(ancestorHash)
-                  }
-                }
-
-                if (v) {
-                  // resolveAncestryConflict(cb)
-                }
+          if (validAccordingToCurrentState) {
+            signFlow()
+          }
+          else {
+            val v = validatedTransactions.forall { s =>
+              cb.checkpoint.edge.parentHashes.forall { ancestorHash =>
+                s.validByAncestor(ancestorHash)
               }
-              // Check if parent tips are valid to merge.
+            }
+
+            if (v) {
+              // resolveAncestryConflict(cb)
+            }
+          }
+          // Check if parent tips are valid to merge.
 
 
 
@@ -121,7 +124,7 @@ object EdgeProcessor {
           // Also need to store child references in parent.
           potentialChildren.foreach{
             _.foreach{ c =>
-            //  Future(handleCheckpoint(c, dao, true))
+              //  Future(handleCheckpoint(c, dao, true))
             }
           }
           // Post resolution. onComplete
@@ -303,6 +306,42 @@ object EdgeProcessor {
   }
 
   def acceptCheckpoint(cb: CheckpointBlock)(implicit dao: DAO): Unit = {
+
+    val parents = cb.parentSOEBaseHashes.map{dao.dbActor.getCheckpointCacheData}
+
+    val maxHeight = if (parents.exists(_.isEmpty)) {
+      dao.metricsManager ! IncrementMetric("checkpointAcceptedWithMissingParent")
+      None
+    } else {
+
+      val parents2 = parents.map{_.get}
+      val heights = parents2.map{_.maxHeight}
+      if (heights.exists{_.isEmpty}) {
+        dao.metricsManager ! IncrementMetric("checkpointAcceptedWithMissingParentMaxHeight")
+      }
+
+      val nonEmptyHeights = heights.flatten
+      if (nonEmptyHeights.isEmpty) None else {
+        Some(nonEmptyHeights.max + 1)
+      }
+    }
+
+    val minHeight = if (parents.exists(_.isEmpty)) {
+      None
+    } else {
+
+      val parents2 = parents.map{_.get}
+      val heights = parents2.map{_.minHeight}
+      if (heights.exists{_.isEmpty}) {
+        dao.metricsManager ! IncrementMetric("checkpointAcceptedWithMissingParentMinHeight")
+      }
+
+      val nonEmptyHeights = heights.flatten
+      if (nonEmptyHeights.isEmpty) None else {
+        Some(nonEmptyHeights.min + 1)
+      }
+    }
+
     // Accept transactions
     cb.transactions.foreach { t =>
       dao.metricsManager ! IncrementMetric("transactionAccepted")
@@ -325,7 +364,9 @@ object EdgeProcessor {
       CheckpointCacheData(
         cb,
         inDAG = true,
-        resolved = true
+        resolved = true,
+        maxHeight = maxHeight,
+        minHeight = minHeight
       ),
       resolved = true
     )
@@ -375,8 +416,8 @@ object EdgeProcessor {
     *                         from other pools for processing different operations.
     */
   def handleTransaction(
-                         tx: Transaction, memPool: MemPool, skipValidation: Boolean = true
-                       )(implicit executionContext: ExecutionContext, dao: DAO): MemPool = {
+                         tx: Transaction, skipValidation: Boolean = true
+                       )(implicit executionContext: ExecutionContext, dao: DAO): Unit = {
 
     // TODO: Store TX in DB immediately rather than waiting
     // ^ Requires TX hash partitioning or conflict stuff later + gossiping tx's to wider reach
@@ -386,16 +427,20 @@ object EdgeProcessor {
     // in event where a new signature is being made by another peer it's most likely still valid, should
     // cache the results of this somewhere.
 
-// TODO: Move memPool update logic to actor and send response back to EdgeProcessor
-    if (!memPool.transactions.contains(tx)) {
-      val pool = memPool.copy(transactions = memPool.transactions + tx)
-      dao.metricsManager ! UpdateMetric("transactionMemPool", pool.transactions.size.toString)
+    // TODO: Move memPool update logic to actor and send response back to EdgeProcessor
+    //if (!memPool.transactions.contains(tx)) {
+    if (dao.threadSafeTXMemPool.put(tx)) {
+
+      //val pool = memPool.copy(transactions = memPool.transactions + tx)
+      //dao.metricsManager ! UpdateMetric("transactionMemPool", pool.transactions.size.toString)
+      //dao.threadSafeMemPool.put(transaction)
+
+      dao.metricsManager ! UpdateMetric("transactionMemPool", dao.threadSafeTXMemPool.unsafeCount.toString)
       dao.metricsManager ! IncrementMetric("transactionValidMessages")
-      val updated = formCheckpoint(pool) // TODO: Send to checkpoint formation actor instead
-      updated
+      formCheckpoint() // TODO: Send to checkpoint formation actor instead
     } else {
       dao.metricsManager ! IncrementMetric("transactionValidMemPoolDuplicateMessages")
-      memPool
+      //memPool
     }
 
     /*    val finished = Validation.validateTransaction(dao.dbActor, tx)
@@ -526,61 +571,109 @@ object EdgeProcessor {
   case class FinishedCheckpoint(checkpointBlock: CheckpointBlock, facilitators: Set[Id])
 
   // TODO: Move to checkpoint formation actor
-  def formCheckpoint(memPool: MemPool)(implicit dao: DAO): MemPool = {
+  def formCheckpoint()(implicit dao: DAO): Unit = {
 
-    def canCreateCheckpoint: Boolean = {
-      memPool.transactions.size >= dao.minCheckpointFormationThreshold &&
-        memPool.thresholdMetCheckpoints.size >= 2 && memPool.facilitators.nonEmpty
+    implicit val ec: ExecutionContextExecutor = dao.edgeExecutionContext
+
+    val maybeTransactions = dao.threadSafeTXMemPool.pull(dao.minCheckpointFormationThreshold)
+
+    dao.metricsManager ! IncrementMetric("attemptFormCheckpointCalls")
+
+    if (maybeTransactions.isEmpty) {
+      dao.metricsManager ! IncrementMetric("attemptFormCheckpointInsufficientTX")
     }
 
-    val postCreationMemPool = if (!canCreateCheckpoint) memPool else {
+    maybeTransactions.foreach { transactions =>
 
-      val tips = Random.shuffle(memPool.thresholdMetCheckpoints.toSeq).take(2)
+      val maybeTips = dao.threadSafeTipService.pull()
+      if (maybeTips.isEmpty) {
+        dao.metricsManager ! IncrementMetric("attemptFormCheckpointInsufficientTipsOrFacilitators")
+      }
 
-      val tipSOE = tips.map {_._2.checkpointBlock.checkpoint.edge.signedObservationEdge}.sortBy(_.hash)
+      maybeTips.foreach{ case (tipSOE, facils) =>
 
-      val mergedTipHash = tipSOE.map{_.hash}.mkString("")
+        val checkpointBlock = createCheckpointBlock(transactions, tipSOE)(dao.keyPair)
+        dao.metricsManager ! IncrementMetric("checkpointBlocksCreated")
 
-      val totalNumFacil = memPool.facilitators.size
-      // TODO: Use XOR distance instead as it handles peer data mismatch cases better
-      val facilitatorIndex = (BigInt(mergedTipHash, 16) % totalNumFacil).toInt
-      val sortedFacils = memPool.facilitators.toSeq.sortBy(_._1.encodedId.b58Encoded)
-      val selectedFacils = Seq.tabulate(2){i => (i + facilitatorIndex) % totalNumFacil }.map{sortedFacils(_)}
+        val finalFacilitators = facils.keySet
 
-      val transactions = Random.shuffle(memPool.transactions).take(dao.minCheckpointFormationThreshold)
+        val response = facils.map { case (facilId, data) =>
+          facilId -> data.client.post(s"request/signature", SignatureRequest(checkpointBlock, finalFacilitators + dao.id))
+            .map {
+              _.body.x[Option[SignatureResponse]]
+            }
+        }
 
-      val checkpointBlock = createCheckpointBlock(transactions.toSeq, tipSOE)(dao.keyPair)
-      dao.metricsManager ! IncrementMetric("checkpointBlocksCreated")
+        val attempt = Try{Future.sequence(response.values).get(180)}
 
-      val newMemPool = memPool.copy(transactions = memPool.transactions.diff(transactions)).plus(checkpointBlock)
+        if (attempt.isFailure) {
+          dao.metricsManager ! IncrementMetric("checkpointSignatureResponseMissing")
+          response.foreach{
+            case (responseId, fut) =>
+              val hostFailedName = facils(responseId).client.hostName + ":" + facils(responseId).client.apiPort
+              fut.value match {
+                case Some(Failure(e)) =>
+                  dao.metricsManager ! IncrementMetric("failureOnSignatureRequestFAILED_" + hostFailedName)
+                  e.printStackTrace()
+                case Some(Success(x)) =>
+                  if (x.isEmpty) {
+                    dao.metricsManager ! IncrementMetric("failureOnSignatureRequestSUCCESSOFNONE_" + hostFailedName)
+                  }
+                case None =>
+                  dao.metricsManager ! IncrementMetric("failureOnSignatureRequestNONE_" + hostFailedName)
+                case _ =>
+                  dao.metricsManager ! IncrementMetric("unexpectedFutureOnFailedRequest_" + hostFailedName)
+              }
+          }
 
-      // Temporary bypass to consensus for mock
-      // Send all data (even if this is redundant.)
-      val finalFacilitators = selectedFacils.map {_._1}.toSet
-      dao.peerManager ! APIBroadcast(
-        _.post(s"request/signature", SignatureRequest(checkpointBlock, finalFacilitators + dao.id)),
-        peerSubset = finalFacilitators
-      )
+        } else {
 
-      newMemPool
+          if (attempt.get.exists(_.isEmpty)) {
+            dao.metricsManager ! IncrementMetric("checkpointSignatureExistsResponseIsOption")
+          } else {
+
+            dao.metricsManager ! IncrementMetric("checkpointSignatureAllResponsesPresent")
+            val finalCB = attempt.get.flatMap {
+              _.map {
+                _.checkpointBlock
+              }
+            }
+              .reduce { (x: CheckpointBlock, y: CheckpointBlock) => x.plus(y) }.plus(checkpointBlock)
+            dao.threadSafeTipService.accept(finalCB)
+            // TODO: Check failures and/or remove constraint of single actor
+
+
+
+            dao.peerInfo.foreach{ case (id, client) =>
+              client.client.post(s"finished/checkpoint", FinishedCheckpoint(finalCB, finalFacilitators)).onComplete{
+                case Failure(e) =>
+                  dao.metricsManager ! IncrementMetric("failedCheckpointFinishedMessages")
+                case _ =>
+              }
+            }
+
+
+          }
+        }
+      }
     }
-
-    postCreationMemPool
 
   }
 
   // Temporary for testing join/leave logic.
-  def handleSignatureRequest(sr: SignatureRequest)(implicit kp: KeyPair, dao: DAO): Unit = {//Todo resolve here still scatter cp if conflict, but add info about conflict
-    if (sr.facilitators.contains(dao.id)) {
-      val replyTo = sr.checkpointBlock.witnessIds.head
-      val updated = sr.checkpointBlock.plus(kp)
-      dao.peerManager ! APIBroadcast(
+  def handleSignatureRequest(sr: SignatureRequest)(implicit dao: DAO): SignatureResponse = {//Todo resolve here still scatter cp if conflict, but add info about conflict
+    //if (sr.facilitators.contains(dao.id)) {
+     // val replyTo = sr.checkpointBlock.witnessIds.head
+      val updated = sr.checkpointBlock.plus(dao.keyPair)
+      SignatureResponse(updated, sr.facilitators)
+      /*dao.peerManager ! APIBroadcast(
         _.post(s"response/signature", SignatureResponse(updated, sr.facilitators)),
         peerSubset = Set(replyTo)
-      )
-    }
+      )*/
+   // } else None
   }
 
+/*
   def handleSignatureResponse(sr: SignatureResponse, memPool: MemPool)(implicit kp: KeyPair, dao: DAO): (CheckpointBlock, MemPool) = {
 
     val cb = sr.checkpointBlock
@@ -621,9 +714,10 @@ object EdgeProcessor {
 
     cbAfterProcessing -> postCreationMemPool
 
-
   }
+*/
 
+/*
   def handleCheckpoint(cb: CheckpointBlock, memPool: MemPool)(implicit kp: KeyPair, dao: DAO): (CheckpointBlock, MemPool) = {
     val (cbAfterProcessing, updatedMemPool) = if (!cb.uniqueSignatures) {
       dao.metricsManager ! IncrementMetric("checkpointUniqueSignaturesFailure")
@@ -690,6 +784,7 @@ object EdgeProcessor {
     cbAfterProcessing -> postCreationMemPool
 
   }
+*/
 
 }
 
@@ -783,6 +878,33 @@ case class Snapshot(lastSnapshot: String, checkpointBlocks: Seq[String]) extends
 
 case class DownloadComplete(latestSnapshot: Snapshot)
 
+object Snapshot {
+
+  val snapshotZero = Snapshot("", Seq())
+  val snapshotZeroHash: String = Snapshot("", Seq()).hash
+
+  def acceptSnapshot(snapshot: Snapshot)(implicit dao: DAO): Unit = {
+    dao.dbActor.putSnapshot(snapshot.hash, snapshot)
+    val cbData = snapshot.checkpointBlocks.map{dao.dbActor.getCheckpointCacheData}
+    if (cbData.exists{_.isEmpty}) {
+      dao.metricsManager ! IncrementMetric("snapshotCBAcceptQueryFailed")
+    }
+
+    for (
+      cbOpt <- cbData;
+      cb <- cbOpt;
+      tx <- cb.checkpointBlock.transactions
+    ) {
+      // TODO: Should really apply this to the N-1 snapshot instead of doing it directly
+      // To allow consensus more time since the latest snapshot includes all data up to present, but this is simple for now
+      tx.ledgerApplySnapshot(dao.dbActor)
+      dao.metricsManager ! IncrementMetric("snapshotAppliedBalance")
+    }
+  }
+
+
+}
+
 class EdgeProcessor(dao: DAO)
                    (implicit timeout: Timeout, executionContext: ExecutionContext) extends Actor with ActorLogging {
 
@@ -792,7 +914,6 @@ class EdgeProcessor(dao: DAO)
 
   dao.heartbeatActor ! HeartbeatSubscribe
 
-  private val snapshotZero = Snapshot("", Seq()).hash
 
   def receive: Receive = active(MemPool())
 
@@ -812,29 +933,10 @@ class EdgeProcessor(dao: DAO)
 
     case InternalHeartbeat =>
 
-      val peerIds = (dao.peerManager ? GetPeerInfo).mapTo[Map[Id, PeerData]].get().toSeq
-      val facilitators = peerIds.filter{case (_, pd) =>
-        pd.timeAdded < (System.currentTimeMillis() - 30*1000) && pd.nodeState == NodeState.Ready
-      }.toMap
-
-      val snapshotUpdatedMemPool = if (
-        memPool.heartBeatRound % dao.snapshotInterval == 0 &&
-        memPool.acceptedCBSinceSnapshot.nonEmpty && dao.nodeState == NodeState.Ready
-      ) {
-        val snapshot = Snapshot(memPool.snapshot.hash, memPool.acceptedCBSinceSnapshot)
-        dao.dbActor.putSnapshot(snapshot.hash, snapshot)
-        if (snapshot.lastSnapshot != snapshotZero) {
-          val lastSnapshotVerification = dao.dbActor.getSnapshot(snapshot.lastSnapshot)
-          if (lastSnapshotVerification.isEmpty) {
-            dao.metricsManager ! IncrementMetric("snapshotVerificationFailed")
-          } else {
-            dao.metricsManager ! IncrementMetric("snapshotVerificationCount")
-          }
-        }
-        dao.metricsManager ! IncrementMetric("snapshotCount")
-        memPool.copy(snapshot = snapshot, acceptedCBSinceSnapshot = Seq())
-      } else memPool
-      context become active(snapshotUpdatedMemPool.copy(facilitators = facilitators, heartBeatRound = memPool.heartBeatRound + 1))
+      if (memPool.heartBeatRound % dao.snapshotInterval == 0) {
+        Future{dao.threadSafeTipService.attemptSnapshot()}(dao.edgeExecutionContext)
+      }
+      context become active(memPool.copy(heartBeatRound = memPool.heartBeatRound + 1))
 
     case GetMemPool =>
       sender() ! memPool
@@ -843,39 +945,46 @@ class EdgeProcessor(dao: DAO)
 
       // Dumb way to set these as active tips, won't pass a double validation but no big deal.
       dao.acceptGenesis(go)
-      context become active(go.initialMemPool)
+      dao.threadSafeTipService.acceptGenesis(go)
 
-    case HandleTransaction(transaction) =>
 
-      context become active(handleTransaction(transaction, memPool))
+/*    case HandleTransaction(transaction) =>
+
+      if (dao.nodeState == NodeState.Ready) {
+        context become active(handleTransaction(transaction))
+      }*/
 
     case sr: SignatureRequest =>
 
-      handleSignatureRequest(sr)
+      sender() ! handleSignatureRequest(sr)
 
+/*
     case sr: SignatureResponse =>
 
       val (_, postCreationMemPool) = handleSignatureResponse(sr, memPool)
       context become active(postCreationMemPool)
+*/
 
+/*
     case fc: FinishedCheckpoint =>
 
       if (fc.checkpointBlock.signatures.size == fc.facilitators.size) {
         context become active(memPool.plus(fc.checkpointBlock, Some(fc.facilitators.size)))
       }
 
+*/
 
     case HandleCheckpoint(cb) =>
       //todo, resolver, validation, conflicts, then into mempool
 
-      val (cbAfterProcessing, postCreationMemPool) = handleCheckpoint(cb, memPool)
+    /*  val (cbAfterProcessing, postCreationMemPool) = handleCheckpoint(cb, memPool)
       sender() ! cbAfterProcessing
-      context become active(postCreationMemPool)
+      context become active(postCreationMemPool)*/
 
     case ConsensusRoundResult(checkpointBlock, roundHash: RoundHash[Checkpoint]) =>
       log.debug(s"handle checkpointBlock = $checkpointBlock")
 
-     // handleCheckpoint(checkpointBlock, dao)
+    // handleCheckpoint(checkpointBlock, dao)
 
   }
 
@@ -884,7 +993,7 @@ class EdgeProcessor(dao: DAO)
 
 // Deprecated but maybe use later
 @deprecated class CheckpointUniqueSigner(dao: DAO)
-                            (implicit timeout: Timeout, executionContext: ExecutionContext) extends Actor with ActorLogging {
+                                        (implicit timeout: Timeout, executionContext: ExecutionContext) extends Actor with ActorLogging {
 
   private val id: Id = dao.id
   private val kp: KeyPair = dao.keyPair
@@ -947,7 +1056,7 @@ class EdgeProcessor(dao: DAO)
 
 // Deprecated but maybe re-use later
 @deprecated class CheckpointMemPoolVerifier(dao: DAO)
-                               (implicit timeout: Timeout, executionContext: ExecutionContext) extends Actor with ActorLogging {
+                                           (implicit timeout: Timeout, executionContext: ExecutionContext) extends Actor with ActorLogging {
 
   // dao.heartbeatActor ! HeartbeatSubscribe
 

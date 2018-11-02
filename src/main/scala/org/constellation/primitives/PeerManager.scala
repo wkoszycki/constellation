@@ -57,6 +57,7 @@ class PeerManager(ipManager: IPManager, dao: DAO)(implicit val materialize: Acto
           s"${idI.short} API: $addr"
         }.mkString(" --- ")
       )
+      dao.peerInfo = updatedPeerInfo
       context become active (updatedPeerInfo)
 
     case SetNodeStatus(id, nodeStatus) =>
@@ -68,13 +69,15 @@ class PeerManager(ipManager: IPManager, dao: DAO)(implicit val materialize: Acto
 
       context become active(updated)
 
-    case a @ AddPeerRequest(host, udpPort, port, id, ns) =>
-      val client =  APIClient(host, port)
+    case a @ AddPeerRequest(host, udpPort, port, id, ns, auxHost) =>
+
+      val adjustedHost = if (auxHost.nonEmpty) auxHost else host
+      val client =  APIClient(adjustedHost, port)
 
       client.id = id
       val updatedPeerInfo = peerInfo + (id -> PeerData(a, client, nodeState = ns))
 
-      val remoteAddr = RemoteAddress(new InetSocketAddress(host, port))
+      val remoteAddr = RemoteAddress(new InetSocketAddress(adjustedHost, port))
       ipManager.addKnownIP(remoteAddr)
 
       dao.metricsManager ! UpdateMetric(
@@ -84,7 +87,7 @@ class PeerManager(ipManager: IPManager, dao: DAO)(implicit val materialize: Acto
           s"${idI.short} API: $addr"
         }.mkString(" --- ")
       )
-      // dao.peerInfo = updatedPeerInfo
+      dao.peerInfo = updatedPeerInfo
       context become active(updatedPeerInfo)
 
     case APIBroadcast(func, skipIds, subset) =>

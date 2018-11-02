@@ -7,9 +7,8 @@ import akka.actor.ActorSystem
 import akka.stream.ActorMaterializer
 import akka.util.Timeout
 import better.files.File
-import org.constellation.primitives.Schema.NodeState
-import org.constellation.{AddPeerRequest, ConstellationNode, HostPort}
-import org.constellation.util.{APIClient, Simulation, TestNode}
+import org.constellation.ConstellationNode
+import org.constellation.util.{Simulation, TestNode}
 import org.scalatest.{AsyncFlatSpecLike, BeforeAndAfterAll, BeforeAndAfterEach, Matchers}
 
 import scala.concurrent.forkjoin.ForkJoinPool
@@ -73,11 +72,15 @@ class E2ETest extends AsyncFlatSpecLike with Matchers with BeforeAndAfterAll wit
 
     assert(sim.run(initialAPIs, addPeerRequests.slice(0, downloadIndex)))
 
+    //Thread.sleep(1000*1000)
+
     // Stop transactions
     sim.triggerRandom(apis)
 
-    Thread.sleep(5000)
+    Thread.sleep(10000)
 
+    // TODO: Change assertions to check several times instead of just waiting ^ with sleep
+    // Follow pattern in Simulation.await examples
     assert(apis.map{_.metrics("checkpointAccepted")}.distinct.size == 1)
     assert(apis.map{_.metrics("transactionAccepted")}.distinct.size == 1)
 

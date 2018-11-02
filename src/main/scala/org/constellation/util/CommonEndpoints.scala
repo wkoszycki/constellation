@@ -12,7 +12,7 @@ import akka.util.Timeout
 import constellation._
 import de.heikoseeberger.akkahttpjson4s.Json4sSupport
 import org.constellation.DAO
-import org.constellation.consensus.{GetMemPool, MemPool, SnapshotInfo}
+import org.constellation.consensus.{GetMemPool, MemPool}
 import org.json4s.native.Serialization
 
 trait CommonEndpoints extends Json4sSupport {
@@ -37,14 +37,17 @@ trait CommonEndpoints extends Json4sSupport {
       complete(mp.thresholdMetCheckpoints.map{_._2.checkpointBlock})
     } ~
       path("info") {
-      val mp = (dao.edgeProcessor ? GetMemPool).mapTo[MemPool].get()
-      complete(SnapshotInfo(mp.snapshot, mp.acceptedCBSinceSnapshot))
+      //val mp = (dao.edgeProcessor ? GetMemPool).mapTo[MemPool].get()
+      complete(dao.threadSafeTipService.getSnapshotInfo)
     } ~
     path("snapshot" / Segment) {s =>
       complete(dao.dbActor.getSnapshot(s))
     } ~
     path("genesis") {
       complete(dao.genesisObservation)
+    } ~
+    pathPrefix("address" / Segment) { a =>
+      complete(dao.dbActor.getAddressCacheData(a))
     }
   }
 }

@@ -93,7 +93,11 @@ class Simulation {
       s"Genesis not stored",
       {
         apis.forall{ a =>
-          a.getBlocking[Option[GenesisObservation]]("genesis").nonEmpty
+          val maybeObservation = a.getBlocking[Option[GenesisObservation]]("genesis")
+          if (maybeObservation.isDefined) {
+            println(s"Genesis stored on ${a.hostName} ${a.apiPort}")
+          }
+          maybeObservation.nonEmpty
         }
       }, maxRetries, delay
     )
@@ -150,14 +154,18 @@ class Simulation {
 
   def checkHealthy(
                     apis: Seq[APIClient],
-                    maxRetries: Int = 10,
-                    delay: Long = 3000
+                    maxRetries: Int = 30,
+                    delay: Long = 5000
                   ): Boolean = {
     awaitConditionMet(
       s"Unhealthy nodes",
       {
         apis.forall{ a =>
-          a.getSync("health").isSuccess
+          val attempt = Try{a.getSync("health").isSuccess}
+          if (attempt.isFailure) {
+            println(s"Failure on: ${a.hostName}:${a.apiPort}")
+          }
+          attempt.getOrElse(false)
         }
       }, maxRetries, delay
     )
@@ -166,9 +174,9 @@ class Simulation {
 
   def checkSnapshot(
                      apis: Seq[APIClient],
-                     num: Int = 2,
-                     maxRetries: Int = 30,
-                     delay: Long = 3000
+                     num: Int = 5,
+                     maxRetries: Int = 60,
+                     delay: Long = 5000
                    ): Boolean = {
     awaitConditionMet(
       s"Less than $num snapshots",
@@ -244,7 +252,10 @@ class Simulation {
         addPeerRequests.zip(apis).foreach{
           case (add, a2) =>
             if (a2 != a) {
-              assert(addPeer(Seq(a), add).forall(_.isSuccess))
+              val addAdjusted = if (a.internalPeerHost.nonEmpty && a2.internalPeerHost.nonEmpty) add
+              else add.copy(auxHost = "")
+
+              assert(addPeer(Seq(a), addAdjusted).forall(_.isSuccess))
             }
         }
     }
@@ -270,6 +281,7 @@ class Simulation {
     addPeersFromRequest(apis, addPeerRequests)
 
     logger.info("Peers added")
+    logger.info("Validating peer health checks")
 
     assert(checkPeersHealthy(apis))
     logger.info("Peer validation passed")

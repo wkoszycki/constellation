@@ -24,7 +24,6 @@ class DAO extends MetricsExt
     resetMetrics()
     peersAwaitingAuthenticationToNumAttempts.clear()
     signedPeerLookup.clear()
-    peerSync.clear()
     deadPeers = Seq()
   }
 
