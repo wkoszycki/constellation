@@ -12,6 +12,8 @@ lazy val versions = new {
   val spongyCastle = "1.58.0.0"
 }
 
+lazy val Http4sVersion = "0.19.0"
+
 lazy val commonSettings = Seq(
   version := _version,
   scalaVersion := "2.12.7",
@@ -39,7 +41,8 @@ lazy val commonSettings = Seq(
     """-DakkaActorSystemName="$AKKA_ACTOR_SYSTEM_NAME""""
   ),
   resolvers += "Artima Maven Repository" at "http://repo.artima.com/releases",
-  resolvers += "Typesafe Releases" at "http://repo.typesafe.com/typesafe/maven-releases/"
+  resolvers += Resolver.typesafeRepo("releases")
+//  resolvers += Resolver.sonatypeRepo("snapshots")
 
 )
 
@@ -71,7 +74,11 @@ lazy val coreDependencies = Seq(
   "com.typesafe.slick" %% "slick" % "3.2.3",
   "com.h2database" % "h2" % "1.4.197",
   "com.twitter" %% "storehaus-cache" % "0.15.0",
-  "io.swaydb" %% "swaydb" % "0.6"
+  "io.swaydb" %% "swaydb" % "0.6",
+  "org.http4s" %% "rho-swagger" % "0.18.0" withJavadoc() withSources(),
+  "org.http4s" %% "http4s-dsl" % Http4sVersion,
+  "org.http4s" %% "http4s-blaze-server" % Http4sVersion,
+  "org.http4s" %% "http4s-json4s" % Http4sVersion
 )
 
 //Test dependencies
