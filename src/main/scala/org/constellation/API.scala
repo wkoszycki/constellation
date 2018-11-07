@@ -49,7 +49,7 @@ case class ProcessingConfig(
                              maxWidth: Int = 10,
                              minCheckpointFormationThreshold: Int = 100,
                              numFacilitatorPeers: Int = 2,
-                             randomTXPerRoundPerPeer: Int = 500,
+                             randomTXPerRoundPerPeer: Int = 250,
                              metricCheckInterval: Int = 60,
                              maxMemPoolSize: Int = 2000,
                              minPeerTimeAddedSeconds: Int = 30,
@@ -175,6 +175,17 @@ class API(udpAddress: InetSocketAddress)(implicit system: ActorSystem, val timeo
             }
 
           }
+        } ~
+          path("seed") {
+          entity(as[HostPort]) { case hp @ HostPort(host, port) =>
+            onComplete{
+              PeerManager.attemptRegisterPeer(hp)
+            } { result =>
+
+              complete(StatusCodes.OK)
+            }
+
+          }
         }
       } ~
       pathPrefix("download") {
@@ -278,6 +289,7 @@ class API(udpAddress: InetSocketAddress)(implicit system: ActorSystem, val timeo
             }
           logger.debug(s"Set external IP RPC request $externalIp $addr")
           dao.externalAddress = Some(addr)
+          dao.metricsManager ! UpdateMetric("externalHost", dao.externalHostString)
           if (ipp.nonEmpty)
             dao.apiAddress = Some(new InetSocketAddress(ipp, 9000))
           complete(StatusCodes.OK)

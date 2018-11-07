@@ -68,12 +68,14 @@ class APIClient(host: String = "127.0.0.1", port: Int, val peerHTTPPort: Int = 9
     TimeUnit.SECONDS.toMillis(timeoutSeconds).toInt
   }
 
+  var defaultTimeoutSeconds: Int = 30
+
   def optHeaders: Map[String, String] = daoOpt.map{
     d =>
       Map("Remote-Address" -> d.externalHostString, "X-Real-IP" -> d.externalHostString)
   }.getOrElse(Map())
 
-  def httpWithAuth(suffix: String, timeoutSeconds: Int = 30): HttpRequest = {
+  def httpWithAuth(suffix: String, timeoutSeconds: Int = defaultTimeoutSeconds): HttpRequest = {
     val timeoutMs = timeoutMS(timeoutSeconds)
     Http(base(suffix)).addAuthIfEnabled().timeout(timeoutMs, timeoutMs).headers(optHeaders)
   }
@@ -82,22 +84,22 @@ class APIClient(host: String = "127.0.0.1", port: Int, val peerHTTPPort: Int = 9
 
   def metrics: Map[String, String] = getBlocking[MetricsResult]("metrics").metrics
 
-  def post(suffix: String, b: AnyRef, timeoutSeconds: Int = 5)
+  def post(suffix: String, b: AnyRef, timeoutSeconds: Int = defaultTimeoutSeconds)
           (implicit f : Formats = constellation.constellationFormats): Future[HttpResponse[String]] = {
     Future(postSync(suffix, b))
   }
 
-  def put(suffix: String, b: AnyRef, timeoutSeconds: Int = 5)
+  def put(suffix: String, b: AnyRef, timeoutSeconds: Int = defaultTimeoutSeconds)
           (implicit f : Formats = constellation.constellationFormats): Future[HttpResponse[String]] = {
     Future(putSync(suffix, b))
   }
 
-  def postEmpty(suffix: String, timeoutSeconds: Int = 15)(implicit f : Formats = constellation.constellationFormats)
+  def postEmpty(suffix: String, timeoutSeconds: Int = defaultTimeoutSeconds)(implicit f : Formats = constellation.constellationFormats)
   : HttpResponse[String] = {
     httpWithAuth(suffix).method("POST").asString
   }
 
-  def postSync(suffix: String, b: AnyRef, timeoutSeconds: Int = 5)(
+  def postSync(suffix: String, b: AnyRef, timeoutSeconds: Int = defaultTimeoutSeconds)(
     implicit f : Formats = constellation.constellationFormats
   ): HttpResponse[String] = {
     val ser = Serialization.write(b)
@@ -108,7 +110,7 @@ class APIClient(host: String = "127.0.0.1", port: Int, val peerHTTPPort: Int = 9
       .asString
   }
 
-  def putSync(suffix: String, b: AnyRef, timeoutSeconds: Int = 5)(
+  def putSync(suffix: String, b: AnyRef, timeoutSeconds: Int = defaultTimeoutSeconds)(
     implicit f : Formats = constellation.constellationFormats
   ): HttpResponse[String] = {
     val ser = Serialization.write(b)
@@ -119,12 +121,12 @@ class APIClient(host: String = "127.0.0.1", port: Int, val peerHTTPPort: Int = 9
       .asString
   }
 
-  def postBlocking[T <: AnyRef](suffix: String, b: AnyRef, timeoutSeconds: Int = 5)(implicit m : Manifest[T], f : Formats = constellation.constellationFormats): T = {
+  def postBlocking[T <: AnyRef](suffix: String, b: AnyRef, timeoutSeconds: Int = defaultTimeoutSeconds)(implicit m : Manifest[T], f : Formats = constellation.constellationFormats): T = {
     val res: HttpResponse[String] = postSync(suffix, b)
     Serialization.read[T](res.body)
   }
 
-  def postNonBlocking[T <: AnyRef](suffix: String, b: AnyRef, timeoutSeconds: Int = 5)(implicit m : Manifest[T], f : Formats = constellation.constellationFormats): Future[T] = {
+  def postNonBlocking[T <: AnyRef](suffix: String, b: AnyRef, timeoutSeconds: Int = defaultTimeoutSeconds)(implicit m : Manifest[T], f : Formats = constellation.constellationFormats): Future[T] = {
     post(suffix, b).map { res =>
       Serialization.read[T](res.body)
     }
@@ -134,26 +136,26 @@ class APIClient(host: String = "127.0.0.1", port: Int, val peerHTTPPort: Int = 9
     Serialization.read[T](res.body)
   }
 
-  def postBlockingEmpty[T <: AnyRef](suffix: String, timeoutSeconds: Int = 5)(implicit m : Manifest[T], f : Formats = constellation.constellationFormats): T = {
+  def postBlockingEmpty[T <: AnyRef](suffix: String, timeoutSeconds: Int = defaultTimeoutSeconds)(implicit m : Manifest[T], f : Formats = constellation.constellationFormats): T = {
     val res = postEmpty(suffix)
     Serialization.read[T](res.body)
   }
 
-  def get(suffix: String, queryParams: Map[String,String] = Map(), timeoutSeconds: Int = 5): Future[HttpResponse[String]] = {
+  def get(suffix: String, queryParams: Map[String,String] = Map(), timeoutSeconds: Int = defaultTimeoutSeconds): Future[HttpResponse[String]] = {
     Future(getSync(suffix, queryParams))
   }
 
-  def getSync(suffix: String, queryParams: Map[String,String] = Map(), timeoutSeconds: Int = 5): HttpResponse[String] = {
+  def getSync(suffix: String, queryParams: Map[String,String] = Map(), timeoutSeconds: Int = defaultTimeoutSeconds): HttpResponse[String] = {
     val req = httpWithAuth(suffix).params(queryParams)
     req.asString
   }
 
-  def getBlocking[T <: AnyRef](suffix: String, queryParams: Map[String,String] = Map(), timeoutSeconds: Int = 5)
+  def getBlocking[T <: AnyRef](suffix: String, queryParams: Map[String,String] = Map(), timeoutSeconds: Int = defaultTimeoutSeconds)
                               (implicit m : Manifest[T], f : Formats = constellation.constellationFormats): T = {
     Serialization.read[T](getBlockingStr(suffix, queryParams, timeoutSeconds))
   }
 
-  def getNonBlocking[T <: AnyRef](suffix: String, queryParams: Map[String,String] = Map(), timeoutSeconds: Int = 5)
+  def getNonBlocking[T <: AnyRef](suffix: String, queryParams: Map[String,String] = Map(), timeoutSeconds: Int = defaultTimeoutSeconds)
                               (implicit m : Manifest[T], f : Formats = constellation.constellationFormats): Future[T] = {
     Future(getBlocking[T](suffix, queryParams, timeoutSeconds))
   }
@@ -163,7 +165,7 @@ class APIClient(host: String = "127.0.0.1", port: Int, val peerHTTPPort: Int = 9
     Serialization.read[T](response)
   }
 
-  def getBlockingStr(suffix: String, queryParams: Map[String,String] = Map(), timeoutSeconds: Int = 5): String = {
+  def getBlockingStr(suffix: String, queryParams: Map[String,String] = Map(), timeoutSeconds: Int = defaultTimeoutSeconds): String = {
     val resp: HttpResponse[String] = httpWithAuth(suffix, timeoutSeconds).params(queryParams).asString
 
     resp.body

@@ -47,7 +47,7 @@ object Download {
 
     val snapshotClient = peerData.head._2.client
 
-    val snapshotInfo = snapshotClient.getBlocking[SnapshotInfo]("info")
+    val snapshotInfo = snapshotClient.getBlocking[SnapshotInfo]("info", timeoutSeconds = 300)
 
     val preExistingSnapshots = dao.snapshotPath.list.toSeq.map{_.name}
 
@@ -121,7 +121,7 @@ object Download {
 
     // Thread.sleep(10*1000)
 
-    val snapshotInfo2 = snapshotClient.getBlocking[SnapshotInfo]("info")
+    val snapshotInfo2 = snapshotClient.getBlocking[SnapshotInfo]("info", timeoutSeconds = 300)
 
     val snapshotHashes2 = snapshotInfo2.snapshotHashes
       .filterNot(preExistingSnapshots.contains)
@@ -165,7 +165,18 @@ object Download {
 
   def download()(implicit dao: DAO, ec: ExecutionContext): Unit = {
 
-    tryWithMetric(downloadActual(), "download")
+    val maxRetries = 5
+    var attemptNum = 0
+    var done = false
+
+    while (attemptNum <= maxRetries) {
+
+      done = tryWithMetric(downloadActual(), "download").isSuccess
+      attemptNum += 1
+
+    }
+
+
 
   }
 
