@@ -448,8 +448,8 @@ trait EdgeDAO {
   val peerAPIExecutionContext: ExecutionContextExecutor =
     ExecutionContext.fromExecutor(Executors.newWorkStealingPool(40))
 
-  val apiClientExecutionContext: ExecutionContextExecutor =
-    ExecutionContext.fromExecutor(Executors.newWorkStealingPool(40))
+  val apiClientExecutionContext: ExecutionContextExecutor = edgeExecutionContext
+  //  ExecutionContext.fromExecutor(Executors.newWorkStealingPool(40))
 
   val signatureExecutionContext: ExecutionContextExecutor =
     ExecutionContext.fromExecutor(Executors.newWorkStealingPool(40))

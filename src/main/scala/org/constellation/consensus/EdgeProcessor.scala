@@ -307,7 +307,7 @@ object EdgeProcessor {
                     // TODO: Check failures and/or remove constraint of single actor
                     dao.peerInfo.foreach { case (id, client) =>
                       tryWithMetric(
-                        client.client.post(s"finished/checkpoint", FinishedCheckpoint(cache, finalFacilitators)),
+                        client.client.postSync(s"finished/checkpoint", FinishedCheckpoint(cache, finalFacilitators)),
                         "finishedCheckpointBroadcast"
                       )
                     }

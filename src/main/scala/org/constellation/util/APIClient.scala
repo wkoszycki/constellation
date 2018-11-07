@@ -123,7 +123,7 @@ class APIClient(host: String = "127.0.0.1", port: Int, val peerHTTPPort: Int = 9
   }
 
 
-  def postSync(suffix: String, b: AnyRef, timeoutSeconds: Int = 5)(
+  def postSync(suffix: String, b: AnyRef, timeoutSeconds: Int = defaultTimeoutSeconds)(
     implicit f : Formats = constellation.constellationFormats
   ): HttpResponse[String] = {
     postSyncRequest(suffix, b, timeoutSeconds).asString
