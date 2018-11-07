@@ -278,8 +278,8 @@ class PeerAPI(override val ipManager: IPManager)(implicit system: ActorSystem, v
     }
   }
 
-  val routes: Route = decodeRequest {
-    encodeResponse {
+  val routes: Route = //decodeRequest {
+  //  encodeResponse {
       // rejectBannedIP {
       signEndpoints ~ commonEndpoints ~ // { //enforceKnownIP
         getEndpoints ~ postEndpoints ~ mixedEndpoints
@@ -287,8 +287,8 @@ class PeerAPI(override val ipManager: IPManager)(implicit system: ActorSystem, v
       // } // ~
       //  faviconRoute ~ jsRequest ~ serveMainPage // <-- Temporary for debugging, control routes disabled.
 
-    }
-  }
+ //   }
+//  }
 
 }
 /*      get {

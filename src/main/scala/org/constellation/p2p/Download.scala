@@ -49,6 +49,9 @@ object Download {
 
     val snapshotInfo = snapshotClient.getBlocking[SnapshotInfo]("info", timeoutSeconds = 300)
 
+    dao.metricsManager ! UpdateMetric("downloadExpectedNumSnapshotsIncludingPreExisting", snapshotInfo.snapshotHashes.size.toString)
+
+
     val preExistingSnapshots = dao.snapshotPath.list.toSeq.map{_.name}
 
     val snapshotHashes = snapshotInfo.snapshotHashes.filterNot(preExistingSnapshots.contains)
@@ -165,7 +168,9 @@ object Download {
 
   def download()(implicit dao: DAO, ec: ExecutionContext): Unit = {
 
-    val maxRetries = 5
+
+    tryWithMetric(downloadActual(), "download")
+    /*val maxRetries = 5
     var attemptNum = 0
     var done = false
 
@@ -173,9 +178,10 @@ object Download {
 
       done = tryWithMetric(downloadActual(), "download").isSuccess
       attemptNum += 1
+      Thread.sleep(5000)
 
     }
-
+*/
 
 
   }

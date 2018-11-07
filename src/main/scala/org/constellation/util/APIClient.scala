@@ -109,17 +109,17 @@ class APIClient(host: String = "127.0.0.1", port: Int, val peerHTTPPort: Int = 9
     implicit f : Formats = constellation.constellationFormats
   ): HttpRequest = {
     val ser = Serialization.write(b)
-    val resp = if (ser.length >= gzipThreshold) {
+/*    val resp = if (ser.length >= gzipThreshold) {
       val gzipped = Gzip.encode(ByteString.fromString(ser)).toArray
       httpWithAuth(suffix)
         .postData(gzipped)
         .headers("content-type" -> "application/json", "Content-Encoding" -> "gzip")
-    } else {
+    } else {*/
       httpWithAuth(suffix)
         .postData(ser)
         .headers("content-type" -> "application/json")
-    }
-    resp
+  //  }
+    //resp
   }
 
 
