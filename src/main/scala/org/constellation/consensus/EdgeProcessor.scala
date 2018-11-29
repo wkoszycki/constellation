@@ -208,7 +208,7 @@ object EdgeProcessor {
 
     implicit val ec: ExecutionContextExecutor = dao.edgeExecutionContext
 
-    val maybeTransactions = dao.threadSafeTXMemPool.pull(dao.minCheckpointFormationThreshold)
+    val maybeTransactions = dao.threadSafeTXMemPool.pull()
 
     dao.metricsManager ! IncrementMetric("attemptFormCheckpointCalls")
 
@@ -217,6 +217,8 @@ object EdgeProcessor {
     }
 
     maybeTransactions.foreach { transactions =>
+
+
 
       val maybeTips = dao.threadSafeTipService.pull()
       if (maybeTips.isEmpty) {

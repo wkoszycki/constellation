@@ -47,11 +47,23 @@ object RandomTransactionManager {
               dao.metricsManager ! IncrementMetric("sentTransactions")
 
               dao.threadSafeTXMemPool.put(tx)
-              /*            // TODO: Change to transport layer call
-        dao.peerManager ! APIBroadcast(
-          _.put(s"transaction/${tx.edge.signedObservationEdge.signatureBatch.hash}", tx),
-          peerSubset = Set(getRandomPeer._1)
-        )*/
+
+              // Re-enable broadcast outside of unit test
+
+/*
+              if (dao.selfAddressPartition == dao.partition) {
+                dao.threadSafeTXMemPool.put(tx)
+              } else {
+
+                dao.metricsManager ! IncrementMetric("transactionsBroadcastToRandomPeer")
+                val idToData = dao.readyPeers.filter(_._2.peerMetadata.partition == dao.selfAddressPartition).toSeq
+
+                val randomPeer = idToData(Random.nextInt(idToData.size))
+
+                randomPeer._2.client.put(s"transaction/${tx.edge.signedObservationEdge.signatureBatch.hash}", tx)
+              }
+*/
+
             }
 
           } else {

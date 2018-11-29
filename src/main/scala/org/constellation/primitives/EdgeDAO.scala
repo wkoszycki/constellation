@@ -21,7 +21,8 @@ class ThreadSafeTXMemPool() {
 
   private var transactions = Seq[Transaction]()
 
-  def pull(minCount: Int): Option[Seq[Transaction]] = this.synchronized{
+  def pull()(implicit dao: DAO): Option[Seq[Transaction]] = this.synchronized{
+    val minCount = dao.minCheckpointFormationThreshold
     if (transactions.size > minCount) {
       val (left, right) = transactions.splitAt(minCount)
       transactions = right
@@ -279,10 +280,12 @@ class ThreadSafeTipService() {
 
       val mergedTipHash = tipSOE.map {_.hash}.mkString("")
 
-      val totalNumFacil = facilitators.size
+      val facilitatorsInPartition = facilitators.filter{_._2.peerMetadata.partition == dao.partition}
+
+      val totalNumFacil = facilitatorsInPartition.size
       // TODO: Use XOR distance instead as it handles peer data mismatch cases better
       val facilitatorIndex = (BigInt(mergedTipHash, 16) % totalNumFacil).toInt
-      val sortedFacils = facilitators.toSeq.sortBy(_._1.encodedId.b58Encoded)
+      val sortedFacils = facilitatorsInPartition.toSeq.sortBy(_._1.encodedId.b58Encoded)
       val selectedFacils = Seq.tabulate(dao.processingConfig.numFacilitatorPeers) { i => (i + facilitatorIndex) % totalNumFacil }.map {
         sortedFacils(_)
       }
@@ -456,6 +459,7 @@ trait EdgeDAO {
 
   var processingConfig = ProcessingConfig()
 
+  var partition: Int = -1
 
   val checkpointService = new CheckpointService(processingConfig.checkpointLRUMaxSize)
   val transactionService = new TransactionService(processingConfig.transactionLRUMaxSize)
@@ -490,7 +494,6 @@ trait EdgeDAO {
   // Temporary to get peer data for tx hash partitioning
   @volatile var peerInfo: Map[Id, PeerData] = Map()
 
-  def readyPeers = peerInfo.filter(_._2.peerMetadata.nodeState == NodeState.Ready)
-
+  def readyPeers: Map[Id, PeerData] = peerInfo.filter(_._2.peerMetadata.nodeState == NodeState.Ready)
 
 }

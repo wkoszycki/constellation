@@ -19,7 +19,7 @@ import org.json4s.native.Serialization
 import scala.concurrent.Future
 
 
-case class NodeStateInfo(nodeState: NodeState)
+case class NodeStateInfo(nodeState: NodeState, partition: Int = 0)
 
 trait CommonEndpoints extends Json4sSupport {
 
@@ -95,7 +95,7 @@ trait CommonEndpoints extends Json4sSupport {
         complete(dao.addressService.get(a).map{_.balanceByLatestSnapshot})
       } ~
     path("state") {
-      complete(NodeStateInfo(dao.nodeState))
+      complete(NodeStateInfo(dao.nodeState, dao.partition))
     } ~
     path("peers") {
       complete(dao.peerInfo.map{_._2.peerMetadata}.toSeq)

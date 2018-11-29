@@ -27,6 +27,15 @@ object Download {
   def downloadActual()(implicit dao: DAO, ec: ExecutionContext): Unit = {
     logger.info("Download started")
     dao.nodeState = NodeState.DownloadInProgress
+
+    // Not preset
+    if (dao.partition < 0) {
+      val partitionToUse = dao.readyPeers.map {
+        _._2.peerMetadata.partition
+      }.groupBy(k => k).minBy(_._2.size)._1
+      dao.partition = partitionToUse
+    }
+
     PeerManager.broadcastNodeState()
 
     dao.peerInfo.map{_._2.client}.foreach{

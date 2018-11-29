@@ -4,6 +4,7 @@ import akka.stream.ActorMaterializer
 import better.files.File
 import com.typesafe.scalalogging.Logger
 import org.constellation.primitives._
+import constellation.SHA256Ext
 
 class DAO extends NodeData
   with Reputation
@@ -50,6 +51,16 @@ class DAO extends NodeData
     f
   }
 
+  // don't use for testing, assign manually
+  def addressPartition(address: String): Int = {
+    BigInt(address.sha256, 16) % processingConfig.numPartitions
+  }.toInt
+
+  def selfAddressPartition: Int = {
+    val res = addressPartition(selfAddressStr)
+    metricsManager ! UpdateMetric("selfAddressPartition", res.toString)
+    res
+  }
 
   def restartNode(): Unit = {
     downloadMode = true

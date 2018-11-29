@@ -7,6 +7,7 @@ import akka.actor.ActorSystem
 import akka.stream.ActorMaterializer
 import org.constellation.{ConstellationNode, HostPort}
 import org.constellation.crypto.KeyUtils
+import org.constellation.primitives.{IncrementMetric, UpdateMetric}
 
 import scala.concurrent.ExecutionContext
 import scala.util.Try
@@ -18,7 +19,8 @@ object TestNode {
   def apply(seedHosts: Seq[HostPort] = Seq(),
             keyPair: KeyPair = KeyUtils.makeKeyPair(),
             randomizePorts: Boolean = true,
-            portOffset: Int = 0
+            portOffset: Int = 0,
+            numPartitions: Int = 2
            )(
     implicit system: ActorSystem,
     materializer: ActorMaterializer,
@@ -47,19 +49,27 @@ object TestNode {
       allowLocalhostPeers = true
     )
 
+
     nodes = nodes :+ node
 
+    node.dao.partition = (portOffset / 2) % numPartitions
+
+    node.dao.metricsManager ! UpdateMetric("partition", node.dao.partition.toString)
+
+    node.logger.info(s"Started testnode on partition ${node.dao.partition}")
+
     node.dao.processingConfig = node.dao.processingConfig.copy(
-      numFacilitatorPeers = 2,
+      numFacilitatorPeers = 1,
       minCheckpointFormationThreshold = 3,
-      randomTXPerRoundPerPeer = 1,
+      randomTXPerRoundPerPeer = 0,
       metricCheckInterval = 10,
       maxWidth = 3,
-      maxMemPoolSize = 15,
+      maxMemPoolSize = 6,
       minPeerTimeAddedSeconds = 1,
       snapshotInterval = 5,
       snapshotHeightInterval = 2,
-      snapshotHeightDelayInterval = 1
+      snapshotHeightDelayInterval = 1,
+      numPartitions = numPartitions
     )
 
     node

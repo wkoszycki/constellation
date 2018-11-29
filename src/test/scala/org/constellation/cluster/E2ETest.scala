@@ -52,7 +52,7 @@ class E2ETest extends AsyncFlatSpecLike with Matchers with BeforeAndAfterAll wit
   implicit val timeout: Timeout = Timeout(90, TimeUnit.SECONDS)
 
 
-  val totalNumNodes = 3
+  val totalNumNodes = 4
 
   private val n1 = createNode(randomizePorts = false)
 
@@ -74,7 +74,7 @@ class E2ETest extends AsyncFlatSpecLike with Matchers with BeforeAndAfterAll wit
 
     assert(sim.run(initialAPIs, addPeerRequests, snapshotCount = 5))
 
-    val downloadNode = TestNode(Seq(HostPort("localhost", 9001)), portOffset = 6, randomizePorts = false)
+    val downloadNode = TestNode(Seq(HostPort("localhost", 9001)), portOffset = totalNumNodes * 2, randomizePorts = false)
 
     val downloadAPI = downloadNode.getAPIClient()
     assert(sim.checkReady(Seq(downloadAPI)))
@@ -90,7 +90,7 @@ class E2ETest extends AsyncFlatSpecLike with Matchers with BeforeAndAfterAll wit
 
     sim.logger.info("Stopping transactions to run parity check")
 
-    Thread.sleep(30000)
+    Thread.sleep(60000)
 
     // TODO: Change assertions to check several times instead of just waiting ^ with sleep
     // Follow pattern in Simulation.await examples

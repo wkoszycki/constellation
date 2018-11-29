@@ -16,7 +16,7 @@ import org.constellation.{DAO, HostPort, PeerMetadata, RemovePeerRequest}
 import scala.concurrent.{ExecutionContextExecutor, Future}
 import scala.util.{Random, Try}
 
-case class SetNodeStatus(id: Id, nodeStatus: NodeState)
+case class SetNodeStatus(id: Id, nodeStatus: NodeState, partition: Int = 0)
 import constellation._
 
 import scala.collection.Set
@@ -68,7 +68,7 @@ object PeerManager {
   }
 
   def broadcastNodeState()(implicit dao: DAO): Unit = {
-    dao.peerManager ! APIBroadcast(_.post("status", SetNodeStatus(dao.id, dao.nodeState)))
+    dao.peerManager ! APIBroadcast(_.post("status", SetNodeStatus(dao.id, dao.nodeState, dao.partition)))
   }
 
 
@@ -186,7 +186,7 @@ class PeerManager(ipManager: IPManager)(implicit val materialize: ActorMateriali
       "peers",
       updatedPeerInfo.map { case (idI, clientI) =>
         val addr = s"http://${clientI.client.hostName}:${clientI.client.apiPort - 1}"
-        s"${idI.short} API: $addr"
+        s"part_${clientI.peerMetadata.partition} addr_part_${dao.addressPartition(idI.address.address)} ${idI.short}  API: $addr"
       }.mkString(" --- ")
     )
     dao.peerInfo = updatedPeerInfo
@@ -260,16 +260,16 @@ class PeerManager(ipManager: IPManager)(implicit val materialize: ActorMateriali
 
       updateMetricsAndDAO(updatedPeerInfo)
 
-    case SetNodeStatus(id, nodeStatus) =>
+    case SetNodeStatus(id, nodeStatus, partition) =>
 
       val updated = peerInfo.get(id).map{
         pd =>
-          peerInfo + (id -> pd.copy(peerMetadata = pd.peerMetadata.copy(nodeState = nodeStatus)))
+          peerInfo + (id -> pd.copy(peerMetadata = pd.peerMetadata.copy(nodeState = nodeStatus, partition = partition)))
       }.getOrElse(peerInfo)
 
       updateMetricsAndDAO(updated)
 
-    case a @ PeerMetadata(host, udpPort, port, id, ns, time, auxHost) =>
+    case a @ PeerMetadata(host, udpPort, port, id, ns, time, auxHost, _) =>
 
       val validHost = (host != dao.externalHostString && host != "127.0.0.1") || !dao.preventLocalhostAsPeer
 
@@ -352,10 +352,11 @@ class PeerManager(ipManager: IPManager)(implicit val materialize: ActorMateriali
 
           logger.info(s"Valid peer signature $request $authSignRequest $sig")
 
-          val state = client.getBlocking[NodeStateInfo]("state").nodeState
+          val nodeStateInfo = client.getBlocking[NodeStateInfo]("state")
+          val state = nodeStateInfo.nodeState
 
           val id = Id(EncodedPublicKey(sig.hashSignature.b58EncodedPublicKey))
-          val add = PeerMetadata(request.host, 16180, request.port, id, nodeState = state)
+          val add = PeerMetadata(request.host, 16180, request.port, id, nodeState = state, partition = nodeStateInfo.partition)
           val peerData = PeerData(add, client)
           client.id = id
           self ! UpdatePeerInfo(peerData)

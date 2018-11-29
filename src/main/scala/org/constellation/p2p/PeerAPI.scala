@@ -253,7 +253,7 @@ class PeerAPI(override val ipManager: IPManager)(implicit system: ActorSystem, v
 
             Future {
               if (dao.nodeState == NodeState.Ready) {
-                handleTransaction(tx)
+                dao.threadSafeTXMemPool.put(tx)
               }
             }(dao.edgeExecutionContext)
 

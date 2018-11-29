@@ -268,7 +268,7 @@ class ConstellationNode(val configKeyPair: KeyPair,
   }
 
   def getAddPeerRequest: PeerMetadata = {
-    PeerMetadata(hostName, udpPort, peerHttpPort, dao.id)
+    PeerMetadata(hostName, udpPort, peerHttpPort, dao.id, partition = dao.partition)
   }
 
   def getAPIClientForNode(node: ConstellationNode): APIClient = {
@@ -278,13 +278,14 @@ class ConstellationNode(val configKeyPair: KeyPair,
     api
   }
 
-  logger.info("Node started")
+  logger.info(s"Node started")
   dao.metricsManager ! UpdateMetric("nodeState", dao.nodeState.toString)
   metricsManager ! UpdateMetric("address", dao.selfAddressStr)
   metricsManager ! UpdateMetric("nodeStartTimeMS", System.currentTimeMillis().toString)
   metricsManager ! UpdateMetric("nodeStartDate", new DateTime(System.currentTimeMillis()).toString)
   dao.metricsManager ! UpdateMetric("externalHost", dao.externalHostString)
   dao.metricsManager ! UpdateMetric("version", "1.0.9")
+  dao.metricsManager ! UpdateMetric("partition", dao.partition.toString)
 
   if (attemptDownload) {
     seedPeers.foreach{

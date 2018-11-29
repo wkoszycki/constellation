@@ -37,7 +37,8 @@ case class PeerMetadata(
                      id: Id,
                      nodeState: NodeState = NodeState.Ready,
                      timeAdded: Long = System.currentTimeMillis(),
-                     auxHost: String = ""
+                     auxHost: String = "",
+                     partition: Int = 0
                    )
 
 
@@ -63,10 +64,9 @@ case class ProcessingConfig(
                              transactionLRUMaxSize: Int = 10000,
                              addressLRUMaxSize: Int = 10000,
                              formCheckpointTimeout: Int = 60,
-                             maxFaucetSize: Int = 1000
-) {
-
-}
+                             maxFaucetSize: Int = 1000,
+                             numPartitions: Int = 2
+)
 
 
 class API(udpAddress: InetSocketAddress)(implicit system: ActorSystem, val timeout: Timeout, val dao: DAO)
@@ -212,7 +212,7 @@ class API(udpAddress: InetSocketAddress)(implicit system: ActorSystem, val timeo
         } else {
           dao.nodeState = NodeState.PendingDownload
         }
-        dao.peerManager ! APIBroadcast(_.post("status", SetNodeStatus(dao.id, dao.nodeState)))
+        PeerManager.broadcastNodeState()
         dao.metricsManager ! UpdateMetric("nodeState", dao.nodeState.toString)
         complete(StatusCodes.OK)
       } ~
