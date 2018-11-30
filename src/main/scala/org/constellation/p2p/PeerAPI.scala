@@ -14,7 +14,7 @@ import de.heikoseeberger.akkahttpjson4s.Json4sSupport
 import org.constellation.CustomDirectives.IPEnforcer
 import org.constellation.DAO
 import org.constellation.consensus.Consensus.{ConsensusProposal, ConsensusVote}
-import org.constellation.consensus.EdgeProcessor.{FinishedCheckpoint, FinishedCheckpointResponse, SignatureRequest, handleTransaction}
+import org.constellation.consensus.EdgeProcessor.{FinishedCheckpoint, FinishedCheckpointResponse, FinishedHeader, SignatureRequest, handleTransaction}
 import org.constellation.consensus.{Consensus, EdgeProcessor}
 import org.constellation.primitives.Schema._
 import org.constellation.primitives._
@@ -35,8 +35,8 @@ case class PeerUnregister(host: String, port: Int, key: String)
 object PeerAPI {
 
   case class EdgeResponse(
-                         soe: Option[SignedObservationEdgeCache] = None,
-                         cb: Option[CheckpointCacheData] = None
+                           soe: Option[SignedObservationEdgeCacheData] = None,
+                           cb: Option[CheckpointCacheData] = None
                          )
 
 }
@@ -210,6 +210,16 @@ class PeerAPI(override val ipManager: IPManager)(implicit system: ActorSystem, v
         }
       } ~
         pathPrefix("finished") {
+          path("header") {
+            entity(as[FinishedHeader]) { fh =>
+              dao.metricsManager ! IncrementMetric("peerApiRXFinishedHeader")
+              onComplete(
+                EdgeProcessor.handleFinishedHeader(fh)
+              ) { _ =>
+                  complete(StatusCodes.OK)
+              }
+            }
+          } ~
         path ("checkpoint") {
 
           extractClientIP { ip =>

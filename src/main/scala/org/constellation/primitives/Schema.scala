@@ -7,6 +7,7 @@ import java.time.Instant
 import constellation.pubKeyToAddress
 import org.constellation.DAO
 import org.constellation.consensus.Consensus.RemoteMessage
+import org.constellation.consensus.EdgeProcessor
 import org.constellation.datastore.Datastore
 import org.constellation.primitives.Schema.EdgeHashType.EdgeHashType
 import org.constellation.util._
@@ -184,6 +185,8 @@ object Schema {
     def plus(other: SignatureBatch): SignedObservationEdge = this.copy(signatureBatch = signatureBatch.plus(other))
     def plus(other: SignedObservationEdge): SignedObservationEdge = this.copy(signatureBatch = signatureBatch.plus(other.signatureBatch))
     def baseHash: String = signatureBatch.hash
+    def simpleValidation() = true
+
   }
 
   /**
@@ -296,7 +299,7 @@ object Schema {
 
     def storeTransactionCacheData(db: Datastore, update: TransactionCacheData => TransactionCacheData, empty: TransactionCacheData, resolved: Boolean = false): Unit = {
       db.updateTransactionCacheData(signedObservationEdge.baseHash, update, empty)
-      db.putSignedObservationEdgeCache(signedObservationEdge.hash, SignedObservationEdgeCache(signedObservationEdge, resolved))
+    //  db.putSignedObservationEdgeCache(signedObservationEdge.hash, SignedObservationEdgeCache(signedObservationEdge, resolved))
       resolvedObservationEdge.data.foreach {
         data =>
           db.putTransactionEdgeData(data.hash, data.asInstanceOf[TransactionEdgeData])
@@ -305,7 +308,7 @@ object Schema {
 
     def storeCheckpointData(db: Datastore, update: CheckpointCacheData => CheckpointCacheData, empty: CheckpointCacheData, resolved: Boolean = false): Unit = {
       db.updateCheckpointCacheData(signedObservationEdge.baseHash, update, empty)
-      db.putSignedObservationEdgeCache(signedObservationEdge.hash, SignedObservationEdgeCache(signedObservationEdge, resolved))
+   //   db.putSignedObservationEdgeCache(signedObservationEdge.hash, SignedObservationEdgeCache(signedObservationEdge, resolved))
       resolvedObservationEdge.data.foreach {
         data =>
           db.putCheckpointEdgeData(data.hash, data.asInstanceOf[CheckpointEdgeData])
@@ -397,7 +400,9 @@ object Schema {
                                   checkpointBlock: Option[CheckpointBlock] = None,
                          //         metadata: CommonMetadata = CommonMetadata(),
                          //         children: Set[String] = Set(),
-                                  height: Option[Height] = None
+                                  height: Option[Height] = None,
+                                  partition: Int = -1,
+                                  parentPartitions: Seq[Int] = Seq()
                                 ) {
 /*
 
@@ -411,7 +416,18 @@ object Schema {
 
   }
 
-  case class SignedObservationEdgeCache(signedObservationEdge: SignedObservationEdge, resolved: Boolean = false)
+  case class SignedObservationEdgeCacheData(
+                                         signedObservationEdge: Option[SignedObservationEdge],
+                                         height: Option[Height] = None,
+                                         parentSOEBaseHashes: Seq[String] = Seq(),
+                                         parentPartitions: Seq[Int] = Seq(),
+                                         partition: Int = -1,
+                                         diffMap: Map[String, Long] = Map()
+                                           ) {
+    def calculateHeight()(implicit dao: DAO): Option[Height] = {
+      EdgeProcessor.calculateHeight(parentSOEBaseHashes)
+    }
+  }
 
   case class CheckpointBlock(
                               transactions: Seq[Transaction],
@@ -419,48 +435,8 @@ object Schema {
                             ) {
 
     def calculateHeight()(implicit dao: DAO): Option[Height] = {
-
-      val parents = parentSOEBaseHashes.map {
-        dao.checkpointService.get
-      }
-
-      val maxHeight = if (parents.exists(_.isEmpty)) {
-        None
-      } else {
-
-        val parents2 = parents.map {_.get}
-        val heights = parents2.map {_.height.map{_.max}}
-
-        val nonEmptyHeights = heights.flatten
-        if (nonEmptyHeights.isEmpty) None else {
-          Some(nonEmptyHeights.max + 1)
-        }
-      }
-
-      val minHeight = if (parents.exists(_.isEmpty)) {
-        None
-      } else {
-
-        val parents2 = parents.map {_.get}
-        val heights = parents2.map {_.height.map{_.min}}
-
-        val nonEmptyHeights = heights.flatten
-        if (nonEmptyHeights.isEmpty) None else {
-          Some(nonEmptyHeights.min + 1)
-        }
-      }
-
-      val height = maxHeight.flatMap{ max =>
-        minHeight.map{
-          min =>
-            Height(min, max)
-        }
-      }
-
-      height
-
+      EdgeProcessor.calculateHeight(parentSOEBaseHashes)
     }
-
     def transactionsValid: Boolean = transactions.nonEmpty && transactions.forall(_.valid)
 
     // TODO: Return checkpoint validation status for more info rather than just a boolean

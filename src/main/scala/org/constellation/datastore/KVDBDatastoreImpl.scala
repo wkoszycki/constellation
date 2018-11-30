@@ -55,21 +55,21 @@ trait KVDBDatastoreImpl extends Datastore {
 
   override def putSignedObservationEdgeCache(
     key: String,
-    t: SignedObservationEdgeCache
+    t: SignedObservationEdgeCacheData
   ): Unit =
     put(key, t)
 
   override def updateSignedObservationEdgeCache(
-    key: String,
-    f: SignedObservationEdgeCache => SignedObservationEdgeCache,
-    empty: SignedObservationEdgeCache
-  ): SignedObservationEdgeCache =
+                                                 key: String,
+                                                 f: SignedObservationEdgeCacheData => SignedObservationEdgeCacheData,
+                                                 empty: SignedObservationEdgeCacheData
+  ): SignedObservationEdgeCacheData =
     update(key, f, empty)
 
   override def getSignedObservationEdgeCache(
     key: String
-  ): Option[SignedObservationEdgeCache] =
-    get[SignedObservationEdgeCache](key)
+  ): Option[SignedObservationEdgeCacheData] =
+    get[SignedObservationEdgeCacheData](key)
   override def putTransactionEdgeData(key: String,
                                       t: TransactionEdgeData): Unit =
     put(key, t)

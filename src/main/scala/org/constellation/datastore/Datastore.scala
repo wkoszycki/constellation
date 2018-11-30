@@ -26,15 +26,15 @@ trait Datastore {
                              empty: AddressCacheData): AddressCacheData
   def getAddressCacheData(key: String): Option[AddressCacheData]
   def putSignedObservationEdgeCache(key: String,
-                                    t: SignedObservationEdgeCache): Unit
+                                    t: SignedObservationEdgeCacheData): Unit
   def updateSignedObservationEdgeCache(
-    key: String,
-    f: SignedObservationEdgeCache => SignedObservationEdgeCache,
-    empty: SignedObservationEdgeCache
-  ): SignedObservationEdgeCache
+                                        key: String,
+                                        f: SignedObservationEdgeCacheData => SignedObservationEdgeCacheData,
+                                        empty: SignedObservationEdgeCacheData
+  ): SignedObservationEdgeCacheData
   def getSignedObservationEdgeCache(
     key: String
-  ): Option[SignedObservationEdgeCache]
+  ): Option[SignedObservationEdgeCacheData]
   def putTransactionEdgeData(key: String, t: TransactionEdgeData): Unit
   def updateTransactionEdgeData(key: String,
                                 f: TransactionEdgeData => TransactionEdgeData,

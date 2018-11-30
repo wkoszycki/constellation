@@ -27,6 +27,84 @@ object EdgeProcessor {
   implicit val timeout: Timeout = Timeout(5, TimeUnit.SECONDS)
 
 
+
+  def calculateHeight(parentSOEBaseHashes: Seq[String])(implicit dao: DAO): Option[Height] = {
+
+    val parents = parentSOEBaseHashes.map { h =>
+      val maybeHeight = dao.checkpointService.get(h).flatMap{_.height}
+      if (maybeHeight.nonEmpty) maybeHeight else {
+        dao.soeService.get(h).flatMap(_.height)
+      }
+    }
+
+    val maxHeight = if (parents.exists(_.isEmpty)) {
+      None
+    } else {
+
+      val heights = parents.map{_.map(_.max)}
+
+      val nonEmptyHeights = heights.flatten
+      if (nonEmptyHeights.isEmpty) None else {
+        Some(nonEmptyHeights.max + 1)
+      }
+    }
+
+    val minHeight = if (parents.exists(_.isEmpty)) {
+      None
+    } else {
+
+      val heights = parents.map{_.map(_.min)}
+
+      val nonEmptyHeights = heights.flatten
+      if (nonEmptyHeights.isEmpty) None else {
+        Some(nonEmptyHeights.min + 1)
+      }
+    }
+
+    val height = maxHeight.flatMap{ max =>
+      minHeight.map{
+        min =>
+          Height(min, max)
+      }
+    }
+
+    height
+
+  }
+
+
+  def acceptHeader(soeCache: SignedObservationEdgeCacheData)(implicit dao: DAO): Unit = {
+
+    soeCache.signedObservationEdge match {
+      case None =>
+        dao.metricsManager ! IncrementMetric("acceptHeaderCalledWithEmptyCB")
+      case Some(soe) =>
+
+        val height = soeCache.calculateHeight()
+
+        val fallbackHeight = if (height.isEmpty) soeCache.height else height
+
+        if (fallbackHeight.isEmpty) {
+          dao.metricsManager ! IncrementMetric("heightHeaderEmpty")
+        } else {
+          dao.metricsManager ! IncrementMetric("heightHeaderNonEmpty")
+        }
+
+        // TODO: Validate parent hashes match and partition as well
+        dao.soeService.put(soe.baseHash, soeCache.copy(height = fallbackHeight))
+        soeCache.diffMap.foreach{
+          case (h, diff) =>
+            dao.addressService.update(
+              h,
+              { a: AddressCacheData => a.copy(balance = a.balance + diff)},
+              AddressCacheData(0L, 0L) // unused since this address should already exist here
+            )
+        }
+
+    }
+
+  }
+
   def acceptCheckpoint(checkpointCacheData: CheckpointCacheData)(implicit dao: DAO): Unit = {
 
     if (checkpointCacheData.checkpointBlock.isEmpty) {
@@ -62,10 +140,7 @@ object EdgeProcessor {
       }
       dao.metricsManager ! IncrementMetric("checkpointAccepted")
       cb.store(
-        CheckpointCacheData(
-          Some(cb),
-          height = fallbackHeight
-        )
+        checkpointCacheData.copy(height = fallbackHeight)
       )
 
     }
@@ -201,6 +276,10 @@ object EdgeProcessor {
   case class SignatureRequest(checkpointBlock: CheckpointBlock, facilitators: Set[Id])
   case class SignatureResponse(checkpointBlock: CheckpointBlock, facilitators: Set[Id], reRegister: Boolean = false)
   case class FinishedCheckpoint(checkpointCacheData: CheckpointCacheData, facilitators: Set[Id])
+  case class FinishedHeader(
+                             soeCache: SignedObservationEdgeCacheData,
+                             facilitators: Set[Id]
+                           )
   case class FinishedCheckpointResponse(reRegister: Boolean = false)
 
   // TODO: Move to checkpoint formation actor
@@ -225,9 +304,9 @@ object EdgeProcessor {
         dao.metricsManager ! IncrementMetric("attemptFormCheckpointInsufficientTipsOrFacilitators")
       }
 
-      maybeTips.foreach { case (tipSOE, facils) =>
+      maybeTips.foreach { case (tipData, facils) =>
 
-        val checkpointBlock = createCheckpointBlock(transactions, tipSOE)(dao.keyPair)
+        val checkpointBlock = createCheckpointBlock(transactions, tipData.map{_.soe})(dao.keyPair)
         dao.metricsManager ! IncrementMetric("checkpointBlocksCreated")
 
         val finalFacilitators = facils.keySet
@@ -306,16 +385,61 @@ object EdgeProcessor {
                     dao.metricsManager ! IncrementMetric("finalCBPassedValidation")
 
 
-                    val cache = CheckpointCacheData(Some(finalCB), height = finalCB.calculateHeight())
+                    val cache = CheckpointCacheData(
+                      Some(finalCB),
+                      height = finalCB.calculateHeight(),
+                      partition = dao.partition,
+                      parentPartitions = tipData.map{_.partition}
+                    )
 
                     dao.threadSafeTipService.accept(cache)
                     // TODO: Check failures and/or remove constraint of single actor
                     dao.peerInfo.foreach { case (id, client) =>
-                      futureTryWithTimeoutMetric(
-                        client.client.postSync(s"finished/checkpoint", FinishedCheckpoint(cache, finalFacilitators)),
-                        "finishedCheckpointBroadcast",
-                        timeoutSeconds = 20
-                      )
+
+                      if (
+                        client.peerMetadata.partition == dao.partition
+                      ) {
+
+                        futureTryWithTimeoutMetric(
+                          client.client.postSync(s"finished/checkpoint", FinishedCheckpoint(cache, finalFacilitators)),
+                          "finishedCheckpointBroadcast",
+                          timeoutSeconds = 20
+                        )
+                        // Send full finished checkpoint
+
+                      } else {
+
+                        val dstPartition = client.peerMetadata.partition
+                        val partitionLookup = dao.peerInfo.map{
+                          case (k,v) =>
+                            k.address.address -> v.peerMetadata.partition
+                        }
+
+                        val fh = FinishedHeader(
+                          SignedObservationEdgeCacheData(
+                            Some(finalCB.soe),
+                            height = cache.height,
+                            cache.checkpointBlock.get.parentSOEBaseHashes,
+                            cache.parentPartitions,
+                            dao.partition,
+                            finalCB.transactions.filter{
+                              t => partitionLookup(t.dst.address) == dstPartition
+                            }.map{ t =>
+                              t.dst.address -> t.amount
+                            }.toMap
+                          ),
+                          finalFacilitators
+                        )
+
+                        futureTryWithTimeoutMetric(
+                          client.client.postSync(s"finished/header", fh),
+                          "finishedHeaderBroadcast",
+                          timeoutSeconds = 20
+                        )
+                        // Send headers only
+
+                      }
+
                     }
                   }
 
@@ -352,10 +476,11 @@ object EdgeProcessor {
   }
 
 
-  def simpleResolveCheckpoint(hash: String)(implicit dao: DAO): Boolean = {
+  def simpleResolveCheckpoint(hash: String, partition: Int)(implicit dao: DAO): Boolean = {
 
-    var activePeer = dao.peerInfo.values.head.client
-    var remainingPeers : Seq[APIClient] = dao.peerInfo.values.map{_.client}.filterNot(_ == activePeer).toSeq
+    val peers = dao.readyPeers.values.toSeq.filter(_.peerMetadata.partition == partition)
+    var activePeer = peers.head.client
+    var remainingPeers : Seq[APIClient] = peers.tail.map{_.client}
 
     var done = false
 
@@ -372,9 +497,57 @@ object EdgeProcessor {
 
       if (done) {
         val x = res.get.get
-        if (!dao.checkpointService.lruCache.contains(x.checkpointBlock.get.baseHash)) {
+        if (!(
+          dao.checkpointService.lruCache.contains(x.checkpointBlock.get.baseHash) ||
+          dao.soeService.lruCache.contains(x.checkpointBlock.get.baseHash)
+          )) {
           dao.metricsManager ! IncrementMetric("resolveAcceptCBCall")
           acceptWithResolveAttempt(x)
+        } else {
+          dao.metricsManager ! IncrementMetric("resolveCBDuplicate")
+        }
+      } else {
+        if (remainingPeers.nonEmpty) {
+          dao.metricsManager ! IncrementMetric("resolvePeerIncrement")
+          activePeer = remainingPeers.head
+          remainingPeers = remainingPeers.filterNot(_ == activePeer)
+        }
+      }
+    }
+    done
+
+  }
+
+  def simpleResolveHeader(hash: String, part: Int)(implicit dao: DAO): Boolean = {
+
+    // TODO: abstract retries and merge with above function
+    val peers = dao.readyPeers.values.toSeq
+    var activePeer = peers.head.client
+    var remainingPeers : Seq[APIClient] = peers.tail.map{_.client}
+
+    var done = false
+
+    while (!done && remainingPeers.nonEmpty) {
+
+      // TODO: Refactor all the error handling on these to include proper status codes etc.
+      // See formCheckpoint for better example of error handling
+      val res = tryWithMetric(
+        {activePeer.getBlocking[Option[SignedObservationEdgeCacheData]]("soe/" + hash, timeoutSeconds = 10)},
+        "downloadHeader"
+      )
+
+      done = res.toOption.exists(_.nonEmpty)
+
+      if (done) {
+        val x = res.get.get
+        if (!(
+          dao.soeService.lruCache.contains(x.signedObservationEdge.get.baseHash) ||
+          dao.checkpointService.lruCache.contains(x.signedObservationEdge.get.baseHash)
+          )) {
+          dao.metricsManager ! IncrementMetric("resolveAcceptCBCall")
+          acceptHeaderWithResolveAttempt(x)
+        } else {
+          dao.metricsManager ! IncrementMetric("resolveHeaderDuplicate")
         }
       } else {
         if (remainingPeers.nonEmpty) {
@@ -393,15 +566,18 @@ object EdgeProcessor {
     dao.threadSafeTipService.accept(checkpointCacheData)
     val block = checkpointCacheData.checkpointBlock.get
     val parents = block.parentSOEBaseHashes
-    val parentExists = parents.map{h => h -> dao.checkpointService.lruCache.contains(h)}
+    val parentExists = parents.zip(checkpointCacheData.parentPartitions).map{ case (h, part) => (h, part) -> {
+      dao.checkpointService.lruCache.contains(h) ||
+      dao.soeService.lruCache.contains(h)
+    }}
     if (parentExists.forall(_._2)) {
       dao.metricsManager ! IncrementMetric("resolveFinishedCheckpointParentsPresent")
     } else {
       dao.metricsManager ! IncrementMetric("resolveFinishedCheckpointParentMissing")
       parentExists.filterNot(_._2).foreach{
-        case (h, _ ) =>
+        case ((h, part), _ ) =>
           futureTryWithTimeoutMetric(
-            simpleResolveCheckpoint(h),
+            simpleResolveCheckpoint(h, part),
             "resolveCheckpoint",
             timeoutSeconds = 30
           )(dao.edgeExecutionContext, dao)
@@ -410,6 +586,61 @@ object EdgeProcessor {
     }
 
   }
+
+  def resolveParent(h: String, part: Int)(implicit dao: DAO): Unit = {
+    if (part == dao.partition) {
+      futureTryWithTimeoutMetric(
+        simpleResolveCheckpoint(h, part),
+        "resolveCheckpoint",
+        timeoutSeconds = 30
+      )(dao.edgeExecutionContext, dao)
+    } else {
+      futureTryWithTimeoutMetric(
+        simpleResolveHeader(h, part),
+        "resolveHeader",
+        timeoutSeconds = 30
+      )(dao.edgeExecutionContext, dao)
+    }
+  }
+
+  def acceptHeaderWithResolveAttempt(soeCache: SignedObservationEdgeCacheData)(implicit dao: DAO): Unit = {
+    dao.threadSafeTipService.accept(soeCache)
+    val parents = soeCache.parentSOEBaseHashes
+    val parentExists = parents.zip(soeCache.parentPartitions).map{case (h, part) => (h, part) -> {
+      dao.checkpointService.lruCache.contains(h) ||
+        dao.soeService.lruCache.contains(h)
+    }}
+
+    if (parentExists.forall(_._2)) {
+      dao.metricsManager ! IncrementMetric("resolveFinishedHeaderParentsPresent")
+    } else {
+      dao.metricsManager ! IncrementMetric("resolveFinishedHeaderParentMissing")
+      parentExists.filterNot(_._2).foreach{
+        case ((h, part), _ ) =>
+         resolveParent(h, part)
+      }
+
+    }
+
+  }
+
+
+  def handleFinishedHeader(fh: FinishedHeader)(implicit dao: DAO): Future[Try[Any]] = {
+    futureTryWithTimeoutMetric(
+      if (dao.nodeState == NodeState.DownloadCompleteAwaitingFinalSync) {
+        dao.threadSafeTipService.syncBufferAccept(fh.soeCache)
+        Future.successful()
+      } else if (dao.nodeState == NodeState.Ready) {
+        if (fh.soeCache.signedObservationEdge.exists {
+          _.simpleValidation()
+        }) {
+          acceptHeaderWithResolveAttempt(fh.soeCache)
+        } else Future.successful()
+      } else Future.successful()
+      , "handleFinishedHeader"
+    )(dao.finishedExecutionContext, dao)
+  }
+
 
   def handleFinishedCheckpoint(fc: FinishedCheckpoint)(implicit dao: DAO): Future[Try[Any]] = {
     futureTryWithTimeoutMetric(
@@ -430,12 +661,14 @@ object EdgeProcessor {
 
 }
 
-case class TipData(checkpointBlock: CheckpointBlock, numUses: Int)
+case class TipData(soe: SignedObservationEdge, numUses: Int, partition: Int)
 
 case class SnapshotInfo(
                          snapshot: Snapshot,
                          acceptedCBSinceSnapshot: Seq[String] = Seq(),
+                         acceptedHeadersSinceSnapshot: Seq[String] = Seq(),
                          acceptedCBSinceSnapshotCache: Seq[CheckpointCacheData] = Seq(),
+                         acceptedHeadersSinceSnapshotCache: Seq[SignedObservationEdgeCacheData] = Seq(),
                          lastSnapshotHeight: Int = 0,
                          snapshotHashes: Seq[String] = Seq(),
                          addressCacheData: Map[String, AddressCacheData] = Map(),
@@ -446,7 +679,12 @@ case class SnapshotInfo(
 case object GetMemPool
 
 case class Snapshot(lastSnapshot: String, checkpointBlocks: Seq[String]) extends ProductHash
-case class StoredSnapshot(snapshot: Snapshot, checkpointCache: Seq[CheckpointCacheData])
+case class StoredSnapshot(
+                           snapshot: Snapshot,
+                           checkpointCache: Seq[CheckpointCacheData],
+                           partition: Int = 0, // Temporary
+                           soeHeaders: Seq[SignedObservationEdgeCacheData] = Seq()
+                         )
 
 case class DownloadComplete(latestSnapshot: Snapshot)
 
@@ -469,9 +707,10 @@ object Snapshot {
   def acceptSnapshot(snapshot: Snapshot)(implicit dao: DAO): Unit = {
     // dao.dbActor.putSnapshot(snapshot.hash, snapshot)
     val cbData = snapshot.checkpointBlocks.map{dao.checkpointService.get}
-    if (cbData.exists{_.isEmpty}) {
+    val header = snapshot.checkpointBlocks.flatMap{dao.soeService.get}
+/*    if (cbData.exists{_.isEmpty}) {
       dao.metricsManager ! IncrementMetric("snapshotCBAcceptQueryFailed")
-    }
+    }*/
 
     for (
       cbOpt <- cbData;
@@ -485,6 +724,19 @@ object Snapshot {
       dao.transactionService.delete(Set(tx.hash))
       dao.metricsManager ! IncrementMetric("snapshotAppliedBalance")
     }
+
+    for (
+      h <- header;
+      (dst, amount) <- h.diffMap
+    )  {
+      dao.addressService.update(
+        dst,
+        { a: AddressCacheData => a.copy(balanceByLatestSnapshot = a.balanceByLatestSnapshot + amount)},
+        AddressCacheData(0L, 0L) // unused since this address should already exist here
+      )
+    }
+
+
   }
 
 

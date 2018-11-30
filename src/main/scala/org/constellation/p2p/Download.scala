@@ -46,7 +46,6 @@ object Download {
       .mapTo[Map[Id, Option[GenesisObservation]]].get()
 
 
-
     // TODO: Error handling and verification
     val genesis = res.filter {
       _._2.nonEmpty
@@ -57,7 +56,7 @@ object Download {
 
     dao.metricsManager ! UpdateMetric("downloadedGenesis", "true")
 
-    val peerData = (dao.peerManager ? GetPeerInfo).mapTo[Map[Id, PeerData]].get().filter{_._2.peerMetadata.nodeState == NodeState.Ready}
+    val peerData = dao.readyPeers.filter{_._2.peerMetadata.partition == dao.partition}
 
     val snapshotClient = peerData.head._2.client
 

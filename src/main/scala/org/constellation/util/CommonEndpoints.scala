@@ -53,7 +53,7 @@ trait CommonEndpoints extends Json4sSupport {
         val info = dao.threadSafeTipService.getSnapshotInfo
         val res =
           KryoSerializer.serializeAnyRef(
-            info.copy(acceptedCBSinceSnapshotCache = info.acceptedCBSinceSnapshot.flatMap{dao.checkpointService.get})
+            info
           )
         complete(res)
       } ~
@@ -104,7 +104,8 @@ trait CommonEndpoints extends Json4sSupport {
       h =>
         complete(dao.transactionService.get(h))
     } ~
-    path("checkpoint" / Segment) { h => complete(dao.checkpointService.get(h))}
+    path("checkpoint" / Segment) { h => complete(dao.checkpointService.get(h))} ~
+    path("soe" / Segment) { h => complete(dao.soeService.get(h))}
 
   }
 }

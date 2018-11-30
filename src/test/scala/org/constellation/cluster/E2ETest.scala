@@ -73,6 +73,7 @@ class E2ETest extends AsyncFlatSpecLike with Matchers with BeforeAndAfterAll wit
     println("API Ports: " + apis.map{_.apiPort})
 
     assert(sim.run(initialAPIs, addPeerRequests, snapshotCount = 5))
+/*
 
     val downloadNode = TestNode(Seq(HostPort("localhost", 9001)), portOffset = totalNumNodes * 2, randomizePorts = false)
 
@@ -80,10 +81,11 @@ class E2ETest extends AsyncFlatSpecLike with Matchers with BeforeAndAfterAll wit
     assert(sim.checkReady(Seq(downloadAPI)))
 
     Thread.sleep(60*1000)
+*/
 
-    val allAPIs = apis :+ downloadAPI
+    val allAPIs = apis // :+ downloadAPI
 
-    // Thread.sleep(1000*1000)
+    //Thread.sleep(1000*1000)
 
     // Stop transactions
     sim.triggerRandom(allAPIs)
@@ -103,7 +105,8 @@ class E2ETest extends AsyncFlatSpecLike with Matchers with BeforeAndAfterAll wit
     assert(
       storedSnapshots.toSet
         .map{x : Seq[StoredSnapshot] =>
-          x.map{_.checkpointCache.flatMap{_.checkpointBlock}}.toSet
+          //x.map{_.checkpointCache.flatMap{_.checkpointBlock}}.toSet
+          x.map{_.snapshot.checkpointBlocks}.toSet
         }.size == 1
     )
 
