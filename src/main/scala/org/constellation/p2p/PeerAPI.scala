@@ -1,7 +1,6 @@
 package org.constellation.p2p
 
 import akka.actor.ActorSystem
-import akka.http.scaladsl.coding.Gzip
 import akka.http.scaladsl.marshalling.Marshaller._
 import akka.http.scaladsl.model._
 import akka.http.scaladsl.server.Directives.{path, _}
@@ -133,14 +132,12 @@ class PeerAPI(override val ipManager: IPManager)(implicit system: ActorSystem, v
       path("faucet") {
         entity(as[SendToAddress]) { sendRequest =>
           // TODO: Add limiting
-          if (sendRequest.amountActual < (dao.processingConfig.maxFaucetSize * Schema.NormalizationFactor)) {
-            logger.info(s"Faucet approved to $sendRequest")
+          if (sendRequest.amountActual < (dao.processingConfig.maxFaucetSize * Schema.NormalizationFactor) &&
+            dao.addressService.get(dao.selfAddressStr).map{_.balance}.getOrElse(0L) > (dao.processingConfig.maxFaucetSize * Schema.NormalizationFactor * 5)
+          ) {
+            logger.info(s"send transaction to address $sendRequest")
 
-            val tx = createTransaction(dao.selfAddressStr, sendRequest.dst, sendRequest.amountActual, dao.keyPair,
-              normalized = false
-            )
-
-            logger.info(s"Faucet request tx hash: ${tx.hash}")
+            val tx = createTransaction(dao.selfAddressStr, sendRequest.dst, sendRequest.amountActual, dao.keyPair, normalized = false)
             dao.threadSafeTXMemPool.put(tx, overrideLimit = true)
             dao.metricsManager ! IncrementMetric("faucetRequest")
 
@@ -227,19 +224,7 @@ class PeerAPI(override val ipManager: IPManager)(implicit system: ActorSystem, v
               // TODO: Validation / etc.
               dao.metricsManager ! IncrementMetric("peerApiRXFinishedCheckpoint")
               onComplete(
-                futureTryWithTimeoutMetric(
-                  if (dao.nodeState == NodeState.DownloadCompleteAwaitingFinalSync) {
-                    dao.threadSafeTipService.syncBufferAccept(fc.checkpointCacheData)
-                    Future.successful()
-                  } else if (dao.nodeState == NodeState.Ready) {
-                    if (fc.checkpointCacheData.checkpointBlock.exists {
-                      _.simpleValidation()
-                    }) {
-                      dao.threadSafeTipService.accept(fc.checkpointCacheData)
-                    } else Future.successful()
-                  } else Future.successful()
-                  , "peerAPIFinishedCheckpointRX"
-                )(dao.finishedExecutionContext, dao)
+                EdgeProcessor.handleFinishedCheckpoint(fc)
               ) {
                 result => // ^ Errors captured above
                   val maybeResponse = result.toOption.flatMap {
@@ -278,16 +263,14 @@ class PeerAPI(override val ipManager: IPManager)(implicit system: ActorSystem, v
     }
   }
 
-  val routes: Route = decodeRequest {
-    encodeResponse {
-      // rejectBannedIP {
-      signEndpoints ~ commonEndpoints ~ // { //enforceKnownIP
+  val routes: Route = {
+   // rejectBannedIP {
+      signEndpoints ~ commonEndpoints ~  // { //enforceKnownIP
         getEndpoints ~ postEndpoints ~ mixedEndpoints
-      //  }
-      // } // ~
-      //  faviconRoute ~ jsRequest ~ serveMainPage // <-- Temporary for debugging, control routes disabled.
+    //  }
+   // } // ~
+    //  faviconRoute ~ jsRequest ~ serveMainPage // <-- Temporary for debugging, control routes disabled.
 
-    }
   }
 
 }

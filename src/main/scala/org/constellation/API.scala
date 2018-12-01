@@ -49,7 +49,7 @@ case class ProcessingConfig(
                              maxWidth: Int = 10,
                              minCheckpointFormationThreshold: Int = 100,
                              numFacilitatorPeers: Int = 2,
-                             randomTXPerRoundPerPeer: Int = 500,
+                             randomTXPerRoundPerPeer: Int = 100,
                              metricCheckInterval: Int = 60,
                              maxMemPoolSize: Int = 2000,
                              minPeerTimeAddedSeconds: Int = 30,
@@ -58,9 +58,9 @@ case class ProcessingConfig(
                              peerHealthCheckInterval : Int = 30,
                              peerDiscoveryInterval : Int = 60,
                              snapshotHeightInterval: Int = 5,
-                             snapshotHeightDelayInterval: Int = 10,
+                             snapshotHeightDelayInterval: Int = 15,
                              snapshotInterval: Int = 25,
-                             checkpointLRUMaxSize: Int = 2000,
+                             checkpointLRUMaxSize: Int = 4000,
                              transactionLRUMaxSize: Int = 10000,
                              addressLRUMaxSize: Int = 10000,
                              formCheckpointTimeout: Int = 60,
@@ -152,6 +152,22 @@ class API(udpAddress: InetSocketAddress)(implicit system: ActorSystem, val timeo
             } else {
               complete(StatusCodes.NotFound)
             }
+          } ~
+          path("dashboard") {
+            val txs = dao.transactionService.getLast20TX
+            val self = Node(selfAddress.address,
+              selfPeer.data.externalAddress.map(_.getHostName).getOrElse(""),
+              selfPeer.data.externalAddress.map(_.getPort).getOrElse(0))
+            val peerMap = dao.peerInfo.toSeq.map {
+              case (id,pd) => Node(id.address.address, pd.peerMetadata.host, pd.peerMetadata.httpPort)
+            } :+ self
+
+            complete(
+              Map(
+                "peers" -> peerMap,
+                "transactions" -> txs
+              ))
+
           }
       }
     }
@@ -244,7 +260,7 @@ class API(udpAddress: InetSocketAddress)(implicit system: ActorSystem, val timeo
 
           logger.info(s"send transaction to address $sendRequest")
 
-          val tx = createTransaction(dao.selfAddressStr, sendRequest.dst, sendRequest.amountActual, dao.keyPair)
+          val tx = createTransaction(dao.selfAddressStr, sendRequest.dst, sendRequest.amountActual, dao.keyPair, normalized = false)
           dao.threadSafeTXMemPool.put(tx, overrideLimit = true)
 
           complete(tx.hash)
@@ -278,6 +294,7 @@ class API(udpAddress: InetSocketAddress)(implicit system: ActorSystem, val timeo
             }
           logger.debug(s"Set external IP RPC request $externalIp $addr")
           dao.externalAddress = Some(addr)
+          dao.metricsManager ! UpdateMetric("externalHost", dao.externalHostString)
           if (ipp.nonEmpty)
             dao.apiAddress = Some(new InetSocketAddress(ipp, 9000))
           complete(StatusCodes.OK)

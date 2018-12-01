@@ -8,6 +8,7 @@ import com.typesafe.config.ConfigFactory
 import org.constellation.DAO
 import org.constellation.consensus.{Snapshot, SnapshotInfo, StoredSnapshot}
 import org.constellation.primitives.Schema.{Id, MetricsResult}
+import org.constellation.serializer.KryoSerializer
 import org.json4s.native.Serialization
 import org.json4s.{Formats, native}
 import scalaj.http.{Http, HttpRequest, HttpResponse}
@@ -183,6 +184,10 @@ class APIClient(host: String = "127.0.0.1", port: Int, val peerHTTPPort: Int = 9
     resp.body
   }
 
+  def getBlockingBytesKryo[T <: AnyRef](suffix: String, queryParams: Map[String,String] = Map(), timeoutSeconds: Int = 5): T = {
+    KryoSerializer.deserializeCast[T](httpWithAuth(suffix, timeoutSeconds).params(queryParams).asBytes.body)
+  }
+
   def getSnapshotInfo(): SnapshotInfo = getBlocking[SnapshotInfo]("info")
 
 
@@ -217,7 +222,7 @@ class APIClient(host: String = "127.0.0.1", port: Int, val peerHTTPPort: Int = 9
     val hashes = getBlocking[Seq[String]]("snapshotHashes")
 
     hashes.map{ h =>
-      getBlocking[Option[StoredSnapshot]]("storedSnapshot/" + h).get
+      getBlockingBytesKryo[StoredSnapshot]("storedSnapshot/" + h)
     }
 
   }

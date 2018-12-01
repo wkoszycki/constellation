@@ -2,6 +2,7 @@ package org.constellation.primitives
 
 import java.net.InetSocketAddress
 import java.security.{KeyPair, PublicKey}
+import java.time.Instant
 
 import constellation.pubKeyToAddress
 import org.constellation.DAO
@@ -398,10 +399,11 @@ object Schema {
                              rxTime: Long = System.currentTimeMillis(), // TODO: Unify common metadata like this
                            )
 
+  // TODO: Separate cache with metadata vs what is stored in snapshot.
   case class CheckpointCacheData(
                                   checkpointBlock: Option[CheckpointBlock] = None,
-                                  metadata: CommonMetadata = CommonMetadata(),
-                                  children: Set[String] = Set(),
+                         //         metadata: CommonMetadata = CommonMetadata(),
+                         //         children: Set[String] = Set(),
                                   height: Option[Height] = None
                                 ) {
 /*
@@ -686,6 +688,12 @@ object Schema {
   final case class Vote(vote: Signed[VoteData]) extends ProductHash with Fiber
 
   case class TransactionSerialized(hash: String, sender: String, receiver: String, amount: Long, signers: Set[String], time: Long)
+  object TransactionSerialized {
+    def apply(tx: Transaction): TransactionSerialized =
+      new TransactionSerialized(tx.hash, tx.src.address, tx.dst.address, tx.amount,
+        tx.signatures.map(_.address).toSet, Instant.now.getEpochSecond)
+  }
+
   case class Node(address: String, host: String, port: Int)
 
 }

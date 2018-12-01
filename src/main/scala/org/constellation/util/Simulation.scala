@@ -183,18 +183,16 @@ class Simulation {
 
   def checkSnapshot(
                      apis: Seq[APIClient],
-                     num: Int = 3,
-                     maxRetries: Int = 60,
-                     delay: Long = 5000
+                     num: Int = 2,
+                     maxRetries: Int = 100,
+                     delay: Long = 10000
                    ): Boolean = {
     awaitConditionMet(
       s"Less than $num snapshots",
       {
         apis.forall{ a =>
-          val m = a.metrics
-          val info = a.getBlocking[SnapshotInfo]("info")
-          info.snapshot.checkpointBlocks.nonEmpty && info.acceptedCBSinceSnapshot.nonEmpty &&
-            m.get("snapshotCount").exists{_.toInt >= num}
+          val m = Try{a.metrics}.toOption.getOrElse(Map())
+          m.get("snapshotCount").exists{_.toInt >= num}
         }
       }, maxRetries, delay
     )
@@ -288,7 +286,8 @@ class Simulation {
            apis: Seq[APIClient],
            addPeerRequests: Seq[PeerMetadata],
            attemptSetExternalIP: Boolean = false,
-           useRegistrationFlow: Boolean = false
+           useRegistrationFlow: Boolean = false,
+           snapshotCount: Int = 2
          )(implicit executionContext: ExecutionContext): Boolean = {
 
     assert(checkHealthy(apis))
@@ -327,7 +326,7 @@ class Simulation {
 
     logger.info("Checkpoint validation passed")
 
-    assert(checkSnapshot(apis))
+    assert(checkSnapshot(apis, num = snapshotCount))
 
     logger.info("Snapshot validation passed")
 

@@ -15,6 +15,7 @@ import org.constellation.serializer.KryoSerializer
 import org.constellation.util.APIClient
 
 import scala.concurrent.ExecutionContext
+import scala.util.{Failure, Try}
 
 /// New download code
 object Download {
@@ -22,11 +23,15 @@ object Download {
   val logger = Logger(s"Download")
   implicit val timeout: Timeout = Timeout(5, TimeUnit.SECONDS)
 
-// Add warning for empty peers
+  // Add warning for empty peers
   def downloadActual()(implicit dao: DAO, ec: ExecutionContext): Unit = {
     logger.info("Download started")
     dao.nodeState = NodeState.DownloadInProgress
     PeerManager.broadcastNodeState()
+
+    dao.peerInfo.map{_._2.client}.foreach{
+      _.post("faucet", SendToAddress(dao.selfAddressStr, 500L))
+    }
 
     val res = (dao.peerManager ? APIBroadcast(_.getBlocking[Option[GenesisObservation]]("genesis")))
       .mapTo[Map[Id, Option[GenesisObservation]]].get()
@@ -47,7 +52,11 @@ object Download {
 
     val snapshotClient = peerData.head._2.client
 
-    val snapshotInfo = snapshotClient.getBlocking[SnapshotInfo]("info")
+    logger.info(s"Downloading from: ${snapshotClient.hostName}:${snapshotClient.apiPort}")
+
+    val snapshotInfo = snapshotClient.getBlockingBytesKryo[SnapshotInfo]("info", timeoutSeconds = 300)
+
+    dao.metricsManager ! UpdateMetric("downloadExpectedNumSnapshotsIncludingPreExisting", snapshotInfo.snapshotHashes.size.toString)
 
     val preExistingSnapshots = dao.snapshotPath.list.toSeq.map{_.name}
 
@@ -82,9 +91,9 @@ object Download {
           c.checkpointBlock.foreach{
             _.transactions.foreach{
               tx =>
-           //     tx.ledgerApplySnapshot()
-                  dao.metricsManager ! IncrementMetric("transactionAccepted")
-                // dao.transactionService.delete(Set(tx.hash))
+                //     tx.ledgerApplySnapshot()
+                dao.metricsManager ! IncrementMetric("transactionAccepted")
+              // dao.transactionService.delete(Set(tx.hash))
             }
           }
 
@@ -95,17 +104,38 @@ object Download {
     }
 
     def processSnapshotHash(peer: APIClient, hash: String): Boolean = {
-      val res = peer.getBlocking[Option[StoredSnapshot]]("storedSnapshot/" + hash)
-      res.foreach{
-        r =>
-          dao.metricsManager ! IncrementMetric("downloadedSnapshots")
-          dao.metricsManager ! IncrementMetric("snapshotCount")
-          acceptSnapshot(r)
+
+      var activePeer = peer
+      var remainingPeers : Seq[APIClient] = peerData.values.map{_.client}.filterNot(_ == activePeer).toSeq
+
+      var done = false
+
+      while (!done && remainingPeers.nonEmpty) {
+
+        val res = Try{activePeer.getBlockingBytesKryo[StoredSnapshot]("storedSnapshot/" + hash, timeoutSeconds = 100)}
+        res match {
+          case Failure(e) => e.printStackTrace()
+          case _ =>
+        }
+        res.toOption.foreach{
+          r =>
+            dao.metricsManager ! IncrementMetric("downloadedSnapshots")
+            dao.metricsManager ! IncrementMetric("snapshotCount")
+            acceptSnapshot(r)
+        }
+        if (res.isFailure) {
+          dao.metricsManager ! IncrementMetric("downloadSnapshotDataFailed")
+        }
+        done = res.isSuccess
+
+        if (!done && remainingPeers.nonEmpty) {
+          activePeer = remainingPeers.head
+          remainingPeers = remainingPeers.filterNot(_ == activePeer)
+        }
+
       }
-      if (res.isEmpty) {
-        dao.metricsManager ! IncrementMetric("downloadSnapshotDataFailed")
-      }
-      res.nonEmpty
+
+      done
     }
 
     val downloadRes = grouped.par.map{
@@ -118,10 +148,11 @@ object Download {
     downloadRes.flatten.toList
     dao.metricsManager ! UpdateMetric("downloadFirstPassComplete", "true")
     dao.nodeState = NodeState.DownloadCompleteAwaitingFinalSync
+    dao.metricsManager ! UpdateMetric("nodeState", dao.nodeState.toString)
 
     // Thread.sleep(10*1000)
 
-    val snapshotInfo2 = snapshotClient.getBlocking[SnapshotInfo]("info")
+    val snapshotInfo2 = snapshotClient.getBlockingBytesKryo[SnapshotInfo]("info", timeoutSeconds = 300)
 
     val snapshotHashes2 = snapshotInfo2.snapshotHashes
       .filterNot(preExistingSnapshots.contains)
@@ -150,22 +181,48 @@ object Download {
     dao.generateRandomTX = true
     dao.nodeState = NodeState.Ready
 
-    dao.threadSafeTipService.syncBuffer.foreach{
-      dao.threadSafeTipService.accept
+    dao.threadSafeTipService.syncBuffer.foreach{ h =>
+
+      if (!snapshotInfo2.acceptedCBSinceSnapshotCache.contains(h) && !snapshotInfo2.snapshotCache.contains(h)) {
+        dao.metricsManager ! IncrementMetric("syncBufferCBAccepted")
+        dao.threadSafeTipService.accept(h)
+        /*        dao.metricsManager ! IncrementMetric("checkpointAccepted")
+                dao.checkpointService.put(h.checkpointBlock.get.baseHash, h)
+                h.checkpointBlock.get.transactions.foreach {
+                  _ =>
+                    dao.metricsManager ! IncrementMetric("transactionAccepted")
+                }*/
+      }
     }
 
     dao.threadSafeTipService.syncBuffer = Seq()
 
     dao.metricsManager ! UpdateMetric("nodeState", dao.nodeState.toString)
     dao.peerManager ! APIBroadcast(_.post("status", SetNodeStatus(dao.id, NodeState.Ready)))
-
+    dao.downloadFinishedTime = System.currentTimeMillis()
+    dao.transactionAcceptedAfterDownload = (dao.metricsManager ? GetMetrics)
+      .mapTo[Map[String, String]].get().get("transactionAccepted").map{_.toLong}.getOrElse(0L)
 
 
   }
 
   def download()(implicit dao: DAO, ec: ExecutionContext): Unit = {
 
+
     tryWithMetric(downloadActual(), "download")
+    /*val maxRetries = 5
+    var attemptNum = 0
+    var done = false
+
+    while (attemptNum <= maxRetries && !done) {
+
+      done = tryWithMetric(downloadActual(), "download").isSuccess
+      attemptNum += 1
+      Thread.sleep(5000)
+
+    }
+*/
+
 
   }
 

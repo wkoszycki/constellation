@@ -68,7 +68,7 @@ object RandomTransactionManager {
           }
         }
 
-        if (memPoolCount > dao.processingConfig.minCheckpointFormationThreshold && dao.generateRandomTX) {
+        if (memPoolCount > dao.processingConfig.minCheckpointFormationThreshold && dao.generateRandomTX && dao.nodeState == NodeState.Ready) {
           futureTryWithTimeoutMetric(
             EdgeProcessor.formCheckpoint(),
             "formCheckpointFromRandomTXManager",

@@ -81,8 +81,6 @@ class ThreadSafeTipService() {
 
   var totalNumCBsInShapshots = 0L
 
-  var performSnapshots : Boolean = true
-
   // ONLY TO BE USED BY DOWNLOAD COMPLETION CALLER
   def setSnapshot(latestSnapshotInfo: SnapshotInfo)(implicit dao: DAO): Unit = this.synchronized{
     snapshot = latestSnapshotInfo.snapshot
@@ -126,9 +124,9 @@ class ThreadSafeTipService() {
   }
 
   // TODO: Read from lastSnapshot in DB optionally, assign elsewhere
-  var lastSnapshotHeight = 0L
+  var lastSnapshotHeight = 0
 
-  def getMinTipHeight()(implicit dao: DAO): Long = thresholdMetCheckpoints.keys.map {
+  def getMinTipHeight()(implicit dao: DAO) = thresholdMetCheckpoints.keys.map {
     dao.checkpointService.get
   }.flatMap {
     _.flatMap {
@@ -140,7 +138,7 @@ class ThreadSafeTipService() {
 
   var syncBuffer : Seq[CheckpointCacheData] = Seq()
 
-  def syncBufferAccept(cb: CheckpointCacheData)(implicit dao: DAO): Unit = this.synchronized{
+  def syncBufferAccept(cb: CheckpointCacheData)(implicit dao: DAO): Unit = {
     syncBuffer :+= cb
     dao.metricsManager ! UpdateMetric("syncBufferSize", syncBuffer.size.toString)
   }
@@ -299,58 +297,71 @@ class ThreadSafeTipService() {
   // TODO: Synchronize only on values modified by this, same for other functions
   def accept(checkpointCacheData: CheckpointCacheData)(implicit dao: DAO): Unit = this.synchronized {
 
-    tryWithMetric(acceptCheckpoint(checkpointCacheData), "acceptCheckpoint")
+    if (dao.checkpointService.lruCache.contains(checkpointCacheData.checkpointBlock.map {
+      _.baseHash
+    }.getOrElse(""))) {
 
-    def reuseTips: Boolean = thresholdMetCheckpoints.size < dao.maxWidth
+      dao.metricsManager ! IncrementMetric("checkpointAcceptBlockAlreadyStored")
 
-    checkpointCacheData.checkpointBlock.foreach { checkpointBlock =>
+    } else {
 
-      val keysToRemove = checkpointBlock.parentSOEBaseHashes.flatMap {
-        h =>
-          thresholdMetCheckpoints.get(h).flatMap {
-            case TipData(block, numUses) =>
+      tryWithMetric(acceptCheckpoint(checkpointCacheData), "acceptCheckpoint")
 
-              def doRemove(): Option[String] = {
-                dao.metricsManager ! IncrementMetric("checkpointTipsRemoved")
-                Some(block.baseHash)
-              }
+      def reuseTips: Boolean = thresholdMetCheckpoints.size < dao.maxWidth
 
-              if (reuseTips) {
-                if (numUses >= 2) {
-                  doRemove()
-                } else {
-                  None
+      checkpointCacheData.checkpointBlock.foreach { checkpointBlock =>
+
+        val keysToRemove = checkpointBlock.parentSOEBaseHashes.flatMap {
+          h =>
+            thresholdMetCheckpoints.get(h).flatMap {
+              case TipData(block, numUses) =>
+
+                def doRemove(): Option[String] = {
+                  dao.metricsManager ! IncrementMetric("checkpointTipsRemoved")
+                  Some(block.baseHash)
                 }
-              } else {
-                doRemove()
-              }
-          }
+
+                if (reuseTips) {
+                  if (numUses >= 2) {
+                    doRemove()
+                  } else {
+                    None
+                  }
+                } else {
+                  doRemove()
+                }
+            }
+        }
+
+        val keysToUpdate = checkpointBlock.parentSOEBaseHashes.flatMap {
+          h =>
+            thresholdMetCheckpoints.get(h).flatMap {
+              case TipData(block, numUses) =>
+
+                def doUpdate(): Option[(String, TipData)] = {
+                  dao.metricsManager ! IncrementMetric("checkpointTipsIncremented")
+                  Some(block.baseHash -> TipData(block, numUses + 1))
+                }
+
+                if (reuseTips && numUses <= 2) {
+                  doUpdate()
+                } else None
+            }
+        }.toMap
+
+        thresholdMetCheckpoints = thresholdMetCheckpoints +
+          (checkpointBlock.baseHash -> TipData(checkpointBlock, 0)) ++
+          keysToUpdate --
+          keysToRemove
+
+        if (acceptedCBSinceSnapshot.contains(checkpointBlock.baseHash)) {
+          dao.metricsManager ! IncrementMetric("checkpointAcceptedButAlreadyInAcceptedCBSinceSnapshot")
+        } else {
+          acceptedCBSinceSnapshot = acceptedCBSinceSnapshot :+ checkpointBlock.baseHash
+          dao.metricsManager ! UpdateMetric("acceptedCBSinceSnapshot", acceptedCBSinceSnapshot.size.toString)
+        }
+
       }
-
-      val keysToUpdate = checkpointBlock.parentSOEBaseHashes.flatMap {
-        h =>
-          thresholdMetCheckpoints.get(h).flatMap {
-            case TipData(block, numUses) =>
-
-              def doUpdate(): Option[(String, TipData)] = {
-                dao.metricsManager ! IncrementMetric("checkpointTipsIncremented")
-                Some(block.baseHash -> TipData(block, numUses + 1))
-              }
-
-              if (reuseTips && numUses <= 2) {
-                doUpdate()
-              } else None
-          }
-      }.toMap
-
-      thresholdMetCheckpoints = thresholdMetCheckpoints +
-        (checkpointBlock.baseHash -> TipData(checkpointBlock, 0)) ++
-        keysToUpdate --
-        keysToRemove
-
-      acceptedCBSinceSnapshot = acceptedCBSinceSnapshot :+ checkpointBlock.baseHash
-      dao.metricsManager ! UpdateMetric("acceptedCBSinceSnapshot", acceptedCBSinceSnapshot.size.toString)
-
     }
   }
 
@@ -390,7 +401,7 @@ class StorageService[T](size: Int = 50000) {
       }
   }*/
 
-  def delete(keys: Set[String]): lruCache.type = this.synchronized{
+  def delete(keys: Set[String]) = this.synchronized{
     lruCache.multiRemove(keys)
   }
 
@@ -408,8 +419,8 @@ class StorageService[T](size: Int = 50000) {
               empty: => T
             ): T =
     this.synchronized{
-      val data = lruCache.get(key).map {updateFunc}.getOrElse(empty)
-      lruCache.+=(key, data)
+      val data = get(key).map {updateFunc}.getOrElse(empty)
+      put(key, data)
       data
     }
 
@@ -419,7 +430,26 @@ class StorageService[T](size: Int = 50000) {
 
 // TODO: Make separate one for acceptedCheckpoints vs nonresolved etc.
 class CheckpointService(size: Int = 50000) extends StorageService[CheckpointCacheData](size)
-class TransactionService(size: Int = 50000) extends StorageService[TransactionCacheData](size)
+class TransactionService(size: Int = 50000) extends StorageService[TransactionCacheData](size) {
+  private val queue = mutable.Queue[TransactionSerialized]()
+  private val maxQueueSize = 20
+  override def put(
+    key: String,
+    cache: TransactionCacheData
+  ): Unit = {
+    val tx = TransactionSerialized(cache.transaction)
+    queue.synchronized {
+      if (queue.size == maxQueueSize) {
+        queue.dequeue()
+      }
+
+      queue.enqueue(tx)
+      super.put(key, cache)
+    }
+  }
+
+  def getLast20TX = queue.reverse
+}
 class AddressService(size: Int = 50000) extends StorageService[AddressCacheData](size)
 
 trait EdgeDAO {
@@ -445,11 +475,11 @@ trait EdgeDAO {
   val edgeExecutionContext: ExecutionContextExecutor =
     ExecutionContext.fromExecutor(Executors.newWorkStealingPool(40))
 
-  val peerAPIExecutionContext: ExecutionContextExecutor =
-    ExecutionContext.fromExecutor(Executors.newWorkStealingPool(40))
+ // val peerAPIExecutionContext: ExecutionContextExecutor =
+ //   ExecutionContext.fromExecutor(Executors.newWorkStealingPool(40))
 
-  val apiClientExecutionContext: ExecutionContextExecutor =
-    ExecutionContext.fromExecutor(Executors.newWorkStealingPool(40))
+  val apiClientExecutionContext: ExecutionContextExecutor = edgeExecutionContext
+  //  ExecutionContext.fromExecutor(Executors.newWorkStealingPool(40))
 
   val signatureExecutionContext: ExecutionContextExecutor =
     ExecutionContext.fromExecutor(Executors.newWorkStealingPool(40))
@@ -459,6 +489,8 @@ trait EdgeDAO {
 
   // Temporary to get peer data for tx hash partitioning
   @volatile var peerInfo: Map[Id, PeerData] = Map()
+
+  def readyPeers = peerInfo.filter(_._2.peerMetadata.nodeState == NodeState.Ready)
 
 
 }
