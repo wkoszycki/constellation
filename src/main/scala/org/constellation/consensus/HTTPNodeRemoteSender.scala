@@ -1,10 +1,12 @@
 package org.constellation.consensus
-import akka.actor.Props
+
+import akka.actor.ActorRef
+import org.constellation.primitives.PeerData
 
 class HTTPNodeRemoteSender extends NodeRemoteSender {
-  override def receive: Receive = ???
-}
+  override def broadcastRoundStartNotification(roundId: RoundId, peerData: Seq[PeerData]): Unit = ???
 
-object HTTPNodeRemoteSender {
-  def props: Props = Props(new HTTPNodeRemoteSender)
+  override def receiveRoundStartNotification(roundId: RoundId,
+                                             peerData: Seq[PeerData],
+                                             replyTo: ActorRef): Unit = ???
 }

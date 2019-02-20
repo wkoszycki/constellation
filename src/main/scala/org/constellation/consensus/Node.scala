@@ -2,10 +2,12 @@ package org.constellation.consensus
 import akka.actor.{Actor, ActorLogging, ActorRef, Props}
 import akka.pattern.{Backoff, BackoffSupervisor}
 import org.constellation.DAO
+import org.constellation.consensus.NodeRemoteSender.BroadcastRoundStartNotification
+import org.constellation.primitives.PeerData
 
 import scala.concurrent.duration._
 
-class Node extends Actor with ActorLogging {
+class Node(remoteSenderSupervisor: ActorRef)(implicit dao: DAO) extends Actor with ActorLogging {
   val roundManagerProps: Props = RoundManager.props
   val roundManagerSupervisor: Props = BackoffSupervisor.props(
     Backoff.onFailure(
@@ -19,19 +21,7 @@ class Node extends Actor with ActorLogging {
   val roundManager: ActorRef =
     context.actorOf(roundManagerSupervisor, name = "round-manager-supervisor")
 
-  val nodeRemoteSender: Props = HTTPNodeRemoteSender.props
-  val nodeRemoteSupervisor: Props = BackoffSupervisor.props(
-    Backoff.onFailure(
-      roundManagerProps,
-      childName = "node-remote",
-      minBackoff = 3.seconds,
-      maxBackoff = 30.seconds,
-      randomFactor = 0.2
-    )
-  )
-  val nodeRemote: ActorRef =
-    context.actorOf(nodeRemoteSupervisor, name = "node-remote-supervisor")
-
+  
   override def receive: Receive = {
     case StartBlockCreationRound =>
       roundManager ! StartBlockCreationRound
@@ -43,18 +33,20 @@ class Node extends Actor with ActorLogging {
       roundManager ! cmd
 
     case cmd: NotifyFacilitators =>
-      nodeRemote ! cmd
+      val peerData = dao.pullTips()
+        .map(_._2).map(t => t.values).fold(Seq.empty[PeerData])(p => p.toSeq)
+      remoteSenderSupervisor ! BroadcastRoundStartNotification(cmd.roundId, peerData)
 
     case cmd: BroadcastProposal =>
-      nodeRemote ! cmd
+      remoteSenderSupervisor ! cmd
 
     case cmd: BroadcastMajorityUnionedBlock =>
-      nodeRemote ! cmd
+      remoteSenderSupervisor ! cmd
 
     case _                       => log.info("Received unknown message")
   }
 }
 
 object Node {
-  def props(implicit dao: DAO): Props = Props(new Node)
+  def props(remoteSenderSupervisor: ActorRef)(implicit dao: DAO): Props = Props(new Node(remoteSenderSupervisor))
 }
